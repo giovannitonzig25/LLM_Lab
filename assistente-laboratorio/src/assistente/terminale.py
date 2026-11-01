@@ -4,7 +4,7 @@ import sys
 from collections.abc import Callable
 
 import openai
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 
 from assistente.config import ErroreConfigurazione, carica_config
 from assistente.grafo import costruisci_grafo
@@ -18,7 +18,24 @@ ERRORE_SERVER = (
 )
 
 
-def esegui_chat(grafo, leggi: Callable[[], str], scrivi: Callable[[str], None]) -> None:
+AVVISO_RISPOSTA_VUOTA = "(Il modello ha restituito una risposta vuota. Riprova o riformula la domanda.)"
+
+
+def esegui_turno(grafo, cronologia: list[BaseMessage], domanda: str, max_passaggi: int) -> tuple[list[BaseMessage], str]:
+    """Esegue un turno. Se fallisce restituisce la cronologia ricevuta, invariata."""
+    try:
+        esito = grafo.invoke(
+            {"messages": [*cronologia, HumanMessage(domanda)]},
+            config={"recursion_limit": max_passaggi},
+        )
+    except openai.OpenAIError as errore:
+        return cronologia, ERRORE_SERVER.format(errore=errore)
+    risposta = esito["messages"][-1].content
+    return esito["messages"], risposta if risposta.strip() else AVVISO_RISPOSTA_VUOTA
+
+
+def esegui_chat(grafo, max_passaggi: int, leggi: Callable[[], str], scrivi: Callable[[str], None]) -> None:
+    cronologia: list[BaseMessage] = []
     while True:
         try:
             domanda = leggi().strip()
@@ -28,12 +45,8 @@ def esegui_chat(grafo, leggi: Callable[[], str], scrivi: Callable[[str], None]) 
             return
         if not domanda:
             continue
-        try:
-            esito = grafo.invoke({"messages": [HumanMessage(domanda)]})
-        except openai.OpenAIError as errore:
-            scrivi(ERRORE_SERVER.format(errore=errore))
-            continue
-        scrivi(esito["messages"][-1].content)
+        cronologia, testo = esegui_turno(grafo, cronologia, domanda, max_passaggi)
+        scrivi(testo)
 
 
 def main() -> int:
@@ -43,7 +56,7 @@ def main() -> int:
     except ErroreConfigurazione as errore:
         print(errore, file=sys.stderr)
         return 1
-    esegui_chat(costruisci_grafo(crea_modello(config)), lambda: input("Tu: "), print)
+    esegui_chat(costruisci_grafo(crea_modello(config)), config.max_passaggi, lambda: input("Tu: "), print)
     return 0
 
 

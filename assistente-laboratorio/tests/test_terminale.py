@@ -1,9 +1,9 @@
 import httpx
 import openai
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 from assistente.grafo import costruisci_grafo
-from assistente.terminale import esegui_chat
+from assistente.terminale import esegui_chat, esegui_turno
 from finti import ModelloSimulato
 
 
@@ -18,7 +18,7 @@ def esegui(grafo, righe):
             raise voce
         return voce
 
-    esegui_chat(grafo, leggi, stampato.append)
+    esegui_chat(grafo, 6, leggi, stampato.append)
     return stampato
 
 
@@ -74,3 +74,41 @@ def test_errore_del_server_non_interrompe_la_chat():
 
     assert any("/v1/models" in riga for riga in stampato)
     assert any("Eccomi" in riga for riga in stampato)
+
+
+def test_la_seconda_domanda_vede_la_prima():
+    grafo, modello = grafo_con("Piacere, Marco", "Ti chiami Marco")
+
+    esegui(grafo, ["Mi chiamo Marco", "Come mi chiamo?", "esci"])
+
+    seconda = modello.chiamate[1]
+    assert [type(m) for m in seconda] == [HumanMessage, AIMessage, HumanMessage]
+    assert [m.content for m in seconda] == ["Mi chiamo Marco", "Piacere, Marco", "Come mi chiamo?"]
+
+
+def test_cronologia_non_persiste_tra_sessioni():
+    grafo, modello = grafo_con("Uno", "Due")
+
+    esegui(grafo, ["Prima sessione", "esci"])
+    esegui(grafo, ["Seconda sessione", "esci"])
+
+    assert [m.content for m in modello.chiamate[1]] == ["Seconda sessione"]
+
+
+def test_errore_del_server_ripristina_la_cronologia():
+    errore = openai.APIConnectionError(request=httpx.Request("POST", "http://localhost:1234/v1"))
+    grafo, _ = grafo_con(errore)
+    precedente = [HumanMessage("Ciao"), AIMessage("Salve")]
+
+    cronologia, testo = esegui_turno(grafo, precedente, "Nuova domanda", 6)
+
+    assert cronologia == precedente
+    assert "/v1/models" in testo
+
+
+def test_risposta_vuota_stampa_un_avviso():
+    grafo, _ = grafo_con("")
+
+    stampato = esegui(grafo, ["Ciao", "esci"])
+
+    assert any(riga.strip() and "vuota" in riga for riga in stampato)
