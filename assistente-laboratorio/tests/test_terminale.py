@@ -1,7 +1,10 @@
+import httpx
+import openai
 from langchain_core.messages import AIMessage
 
-from assistente.grafo import RISPOSTA_FISSA, costruisci_grafo
+from assistente.grafo import costruisci_grafo
 from assistente.terminale import esegui_chat
+from finti import ModelloSimulato
 
 
 def esegui(grafo, righe):
@@ -28,14 +31,23 @@ class GrafoSpia:
         return {"messages": [*stato["messages"], AIMessage("x")]}
 
 
+def grafo_con(*risposte):
+    modello = ModelloSimulato([AIMessage(r) if isinstance(r, str) else r for r in risposte])
+    return costruisci_grafo(modello), modello
+
+
 def test_esci_termina_la_chat():
-    assert esegui(costruisci_grafo(), ["esci"]) == []
+    grafo, _ = grafo_con()
+
+    assert esegui(grafo, ["esci"]) == []
 
 
 def test_domanda_stampa_la_risposta():
-    stampato = esegui(costruisci_grafo(), ["Ciao", "esci"])
+    grafo, _ = grafo_con("Salve!")
 
-    assert any(RISPOSTA_FISSA in riga for riga in stampato)
+    stampato = esegui(grafo, ["Ciao", "esci"])
+
+    assert any("Salve!" in riga for riga in stampato)
 
 
 def test_riga_vuota_ignorata():
@@ -47,8 +59,18 @@ def test_riga_vuota_ignorata():
 
 
 def test_eof_termina_senza_eccezioni():
-    esegui(costruisci_grafo(), [EOFError()])
+    esegui(grafo_con()[0], [EOFError()])
 
 
 def test_ctrl_c_termina_senza_eccezioni():
-    esegui(costruisci_grafo(), [KeyboardInterrupt()])
+    esegui(grafo_con()[0], [KeyboardInterrupt()])
+
+
+def test_errore_del_server_non_interrompe_la_chat():
+    errore = openai.APIConnectionError(request=httpx.Request("POST", "http://localhost:1234/v1"))
+    grafo, _ = grafo_con(errore, "Eccomi")
+
+    stampato = esegui(grafo, ["Prima", "Seconda", "esci"])
+
+    assert any("/v1/models" in riga for riga in stampato)
+    assert any("Eccomi" in riga for riga in stampato)
