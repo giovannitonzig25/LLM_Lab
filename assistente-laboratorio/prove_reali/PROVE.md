@@ -7,4 +7,5 @@ Non sono test automatici: richiedono LM Studio (e, dal Task 6, Docker Desktop) a
 | `verifica_modelli.py` elenca `google/gemma-4-e2b` | eseguita, OK |
 | Una domanda con risposta reale | eseguita, OK |
 | Server irraggiungibile: messaggio chiaro e chat aperta | eseguita su porta inesistente, OK |
+| «Mi chiamo Marco» → «Come mi chiamo?» risponde Marco; dopo il riavvio non lo sa | eseguita, OK |
 | Server LM Studio fermato davvero e ripristinato | da completare |

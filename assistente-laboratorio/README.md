@@ -45,6 +45,8 @@ $env:PYTHONPATH = "src"; .\.venv\Scripts\python.exe -m assistente.terminale
 
 Uscita: `esci`, Ctrl+C o Ctrl+D.
 
+La cronologia vale per la sessione: dentro la stessa esecuzione il modello ricorda i turni precedenti, al riavvio riparte da zero. Se un turno fallisce (per esempio server spento) la cronologia resta com'era prima della domanda.
+
 ## Diagnosi
 
 - **Variabile mancante:** il programma lo dice e termina con codice 1.
