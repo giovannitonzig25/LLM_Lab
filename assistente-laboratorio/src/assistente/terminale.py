@@ -4,13 +4,20 @@ import sys
 from collections.abc import Callable
 
 import openai
+from langgraph.errors import GraphRecursionError
 from langchain_core.messages import BaseMessage, HumanMessage
 
 from assistente.config import ErroreConfigurazione, carica_config
 from assistente.grafo import costruisci_grafo
 from assistente.modello import crea_modello
+from assistente.strumenti import STRUMENTI
 
+LOG = logging.getLogger("assistente.terminale")
 USCITA = "esci"
+MESSAGGIO_LIMITE = (
+    "La richiesta non è stata completata: raggiunto il limite di {limite} passaggi. "
+    "Puoi riprovare o riformulare la domanda."
+)
 ERRORE_SERVER = (
     "Non riesco a ottenere una risposta dal server del modello ({errore}). "
     "Controlla che LM Studio sia attivo e che LM_STUDIO_BASE_URL e LM_STUDIO_MODEL "
@@ -28,6 +35,9 @@ def esegui_turno(grafo, cronologia: list[BaseMessage], domanda: str, max_passagg
             {"messages": [*cronologia, HumanMessage(domanda)]},
             config={"recursion_limit": max_passaggi},
         )
+    except GraphRecursionError:
+        LOG.warning("limite di passaggi raggiunto (%s): turno scartato", max_passaggi)
+        return cronologia, MESSAGGIO_LIMITE.format(limite=max_passaggi)
     except openai.OpenAIError as errore:
         return cronologia, ERRORE_SERVER.format(errore=errore)
     risposta = esito["messages"][-1].content
@@ -56,7 +66,7 @@ def main() -> int:
     except ErroreConfigurazione as errore:
         print(errore, file=sys.stderr)
         return 1
-    esegui_chat(costruisci_grafo(crea_modello(config)), config.max_passaggi, lambda: input("Tu: "), print)
+    esegui_chat(costruisci_grafo(crea_modello(config, STRUMENTI), STRUMENTI), config.max_passaggi, lambda: input("Tu: "), print)
     return 0
 
 
