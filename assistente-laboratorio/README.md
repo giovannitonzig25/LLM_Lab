@@ -47,6 +47,23 @@ Uscita: `esci`, Ctrl+C o Ctrl+D.
 
 La cronologia vale per la sessione: dentro la stessa esecuzione il modello ricorda i turni precedenti, al riavvio riparte da zero. Se un turno fallisce (per esempio server spento) la cronologia resta com'era prima della domanda.
 
+## Strumento orologio e log
+
+Il modello può chiedere lo strumento `orologio`, con un fuso orario IANA (`timezone`, predefinito `Europe/Rome`). Il grafo lo esegue davvero e restituisce il risultato al modello. Ogni richiesta e ogni esito compaiono nei log su stderr:
+
+```
+INFO assistente.strumenti: strumento richiesto: nome=orologio argomenti={'timezone': 'Asia/Tokyo'}
+INFO assistente.strumenti: strumento eseguito: nome=orologio risultato=2026-11-02 01:48:55 (Asia/Tokyo, UTC+09:00)
+```
+
+Un fuso non valido o uno strumento inesistente non fanno cadere il programma: il modello riceve un risultato che inizia con `Errore:`.
+
+## Limite di passaggi
+
+`MAX_PASSAGGI` è il limite di passaggi del grafo (`recursion_limit` di LangGraph), non di richieste di strumento. Misurato con un modello simulato che chiede sempre lo strumento (LangGraph 1.2.19): con 6 il modello è chiamato 3 volte e lo strumento eseguito 3 volte prima dell'interruzione; con 2, una volta ciascuno. Il test `test_caratterizza_il_limite_di_passaggi` fissa questi valori e segnala se cambiano.
+
+Quando il limite è raggiunto il turno viene scartato: la cronologia torna a com'era prima della domanda, compare un messaggio («La richiesta non è stata completata…») e la chat continua.
+
 ## Diagnosi
 
 - **Variabile mancante:** il programma lo dice e termina con codice 1.
