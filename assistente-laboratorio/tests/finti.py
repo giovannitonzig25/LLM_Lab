@@ -3,7 +3,7 @@ from langchain_core.messages import AIMessage, BaseMessage
 
 
 class ModelloSimulato:
-    def __init__(self, risposte: list[AIMessage | Exception], ripeti_ultima: bool = False):
+    def __init__(self, risposte: list[AIMessage | BaseException], ripeti_ultima: bool = False):
         self._risposte = list(risposte)
         self._ripeti_ultima = ripeti_ultima
         self.chiamate: list[list[BaseMessage]] = []
@@ -14,7 +14,7 @@ class ModelloSimulato:
             risposta = self._risposte.pop(0)
         else:
             risposta = self._risposte[0]
-        if isinstance(risposta, Exception):
+        if isinstance(risposta, BaseException):
             raise risposta
         # Copia: un modello reale restituisce messaggi nuovi, e add_messages sostituisce quelli con lo stesso id.
         return risposta.model_copy(deep=True)

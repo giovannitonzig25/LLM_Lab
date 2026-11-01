@@ -40,7 +40,7 @@ def esegui_turno(grafo, cronologia: list[BaseMessage], domanda: str, max_passagg
         return cronologia, MESSAGGIO_LIMITE.format(limite=max_passaggi)
     except openai.OpenAIError as errore:
         return cronologia, ERRORE_SERVER.format(errore=errore)
-    risposta = esito["messages"][-1].content
+    risposta = esito["messages"][-1].text
     return esito["messages"], risposta if risposta.strip() else AVVISO_RISPOSTA_VUOTA
 
 
@@ -49,13 +49,13 @@ def esegui_chat(grafo, max_passaggi: int, leggi: Callable[[], str], scrivi: Call
     while True:
         try:
             domanda = leggi().strip()
+            if domanda == USCITA:
+                return
+            if not domanda:
+                continue
+            cronologia, testo = esegui_turno(grafo, cronologia, domanda, max_passaggi)
         except (EOFError, KeyboardInterrupt):
             return
-        if domanda == USCITA:
-            return
-        if not domanda:
-            continue
-        cronologia, testo = esegui_turno(grafo, cronologia, domanda, max_passaggi)
         scrivi(testo)
 
 

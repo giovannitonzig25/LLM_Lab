@@ -112,3 +112,28 @@ def test_risposta_vuota_stampa_un_avviso():
     stampato = esegui(grafo, ["Ciao", "esci"])
 
     assert any(riga.strip() and "vuota" in riga for riga in stampato)
+
+
+def test_ctrl_c_durante_la_risposta_termina_senza_eccezioni():
+    grafo, _ = grafo_con(KeyboardInterrupt())
+
+    stampato = esegui(grafo, ["Ciao"])
+
+    assert stampato == []
+
+
+def test_contenuto_a_blocchi_viene_stampato_come_testo():
+    grafo, _ = grafo_con(AIMessage(content=[{"type": "text", "text": "ciao dai blocchi"}]))
+
+    stampato = esegui(grafo, ["Ciao", "esci"])
+
+    assert any("ciao dai blocchi" in riga for riga in stampato)
+
+
+def test_contenuto_a_blocchi_vuoto_stampa_un_avviso():
+    grafo, _ = grafo_con(AIMessage(content=[]))
+
+    stampato = esegui(grafo, ["Ciao", "esci"])
+
+    assert any("vuota" in riga for riga in stampato)
+
