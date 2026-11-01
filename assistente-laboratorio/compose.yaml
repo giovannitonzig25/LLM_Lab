@@ -1,0 +1,9 @@
+services:
+  assistente:
+    build: .
+    stdin_open: true
+    tty: true
+    env_file: .env
+    environment:
+      # Dentro il container "localhost" è il container stesso: si punta all'host.
+      LM_STUDIO_BASE_URL: ${LM_STUDIO_DOCKER_URL:-http://host.docker.internal:1234/v1}
