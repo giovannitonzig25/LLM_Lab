@@ -90,6 +90,14 @@ prove_reali/      prove con LM Studio e Docker, da eseguire a mano
 docs/superpowers/ specifica e piano
 ```
 
+## Limitazioni note
+
+- **Immagine Docker:** il codice è copiato nell'immagine al momento della build. Dopo ogni modifica a `src/` esegui `docker compose build`, altrimenti `docker compose run` usa l'immagine vecchia.
+- **`MAX_PASSAGGI`:** con 1 falliscono anche le risposte senza strumento; con 2 o 3 non basta un giro completo dello strumento; ne servono almeno 4.
+- **Fuso orario:** un valore con spazi ai lati (`" Asia/Tokyo"`) viene rifiutato con un errore, e per argomenti del tipo sbagliato il messaggio restituito al modello è lungo.
+- **Errori imprevisti:** un'eccezione non legata al server del modello (per esempio una richiesta di strumento senza identificativo) interrompe la sessione.
+- **Prompt:** dopo Ctrl+C o Ctrl+D il cursore può restare sulla riga di «Tu: ».
+
 ## Diagnosi
 
 - **Variabile mancante:** il programma lo dice e termina con codice 1.
