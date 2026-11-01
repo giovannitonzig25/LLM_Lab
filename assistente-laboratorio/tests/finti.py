@@ -16,4 +16,5 @@ class ModelloSimulato:
             risposta = self._risposte[0]
         if isinstance(risposta, Exception):
             raise risposta
-        return risposta
+        # Copia: un modello reale restituisce messaggi nuovi, e add_messages sostituisce quelli con lo stesso id.
+        return risposta.model_copy(deep=True)
