@@ -8,7 +8,7 @@
 - Non aggiungere dipendenze senza motivarle e concordarle.
 - Non inserire segreti, pesi o ambiente virtuale in Git.
 - Non sono presenti test automatici in questo checkpoint.
-- Avvio dalla radice: .\.venv\Scripts\python.exe client.py
+- Avvio dalla radice: .\.venv\Scripts\python.exe lezione-3\client.py
 - Uscita dal client: `esci` o Ctrl+C.
 - Verifica manuale: due domande nella stessa esecuzione, nome ricordato nella sessione e dimenticato al riavvio, server fermo e ripristinato.
 - Commit in Conventional Commits, un'estensione per commit, lavorando su dev e unendo a main solo dopo la verifica.

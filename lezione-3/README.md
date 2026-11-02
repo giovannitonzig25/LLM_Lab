@@ -25,7 +25,7 @@ Dalla radice della repository:
 
 ```powershell
 py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r lezione-3\requirements.txt
 ```
 
 In VS Code selezionare l'interprete `.venv` con **Python: Select Interpreter**.
@@ -43,16 +43,18 @@ In VS Code selezionare l'interprete `.venv` con **Python: Select Interpreter**.
 3. Creare la configurazione locale, solo se `.env` non esiste già. In `.env.example` i valori sono vuoti: in `.env` vanno compilati `LM_BASE_URL` (per esempio `http://127.0.0.1:1234/v1`) e `LM_MODEL` con l'identificativo letto al punto 2:
 
    ```powershell
-   Copy-Item .env.example .env
-   notepad .env
+   Copy-Item lezione-3\.env.example lezione-3\.env
+   notepad lezione-3\.env
    ```
 
 `.env` resta sul proprio computer ed è escluso da Git.
 
 ## Avvio
 
+Dalla radice della repository:
+
 ```powershell
-.\.venv\Scripts\python.exe client.py
+.\.venv\Scripts\python.exe lezione-3\client.py
 ```
 
 Il client mostra il prompt `Tu>`: scrivere una domanda e premere Invio. Si esce con `esci` o con Ctrl+C; le righe vuote vengono ignorate.
