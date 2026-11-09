@@ -2,8 +2,8 @@
 
 Chiamate FastMCP 4.1.6 effettivamente usate (verificate in T1/T2):
 - `Client(url, timeout=<s>)` come `async with`; `await client.list_tools()` restituisce
-  oggetti `Tool` con `name`, `description`, `input_schema` (JSON Schema); `annotations`
-  arriva in T5.
+  oggetti `Tool` con `name`, `description`, `input_schema` (JSON Schema) e `annotations`
+  (`None` se assenti, altrimenti `ToolAnnotations` con `destructive_hint`).
 - `await client.call_tool(nome, argomenti)`: restituisce un risultato con `content`
   (blocchi di testo); uno strumento che fallisce o argomenti non validi sollevano
   `fastmcp.exceptions.ToolError`; una connessione impossibile solleva `RuntimeError`.
@@ -13,7 +13,7 @@ Nome, descrizione e schema non sono mai scritti a mano qui: arrivano da `list_to
 import asyncio
 import logging
 import threading
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from typing import Any
 
 from fastmcp import Client
@@ -71,9 +71,26 @@ class StrumentoMcp(BaseTool):
     args_schema: dict
     url: str
     timeout: float = 10.0
+    richiede_conferma: bool = False
+    chiedi_conferma: Callable[[str], bool] | None = None
+
+    def _conferma_dell_utente(self, argomenti: dict) -> bool:
+        """Chiede all'utente (fuori dal modello); solo un `True` esplicito vale come sì."""
+        if self.chiedi_conferma is None:
+            LOG.warning("conferma non disponibile: strumento=%s non eseguito", self.name)
+            return False
+        try:
+            esito = self.chiedi_conferma(f"Confermi: {self.name} {argomenti}?") is True
+        except Exception as errore:  # KeyboardInterrupt non è un Exception: risale
+            LOG.warning("conferma fallita (%s): strumento=%s non eseguito", type(errore).__name__, self.name)
+            return False
+        LOG.info("conferma dell'utente: strumento=%s esito=%s", self.name, "sì" if esito else "no")
+        return esito
 
     def _run(self, **argomenti: Any) -> str:
         LOG.info("invocazione: strumento=%s argomenti=%s", self.name, argomenti)
+        if self.richiede_conferma and not self._conferma_dell_utente(argomenti):
+            return "Errore: cancellazione non confermata dall'utente"
         try:
             risultato = _esegui(_chiama(self.url, self.name, argomenti, self.timeout))
         except (TimeoutError, asyncio.TimeoutError):
@@ -96,21 +113,34 @@ async def _elenca(url: str, timeout: float) -> list:
             return await client.list_tools()
 
 
-def scopri_strumenti(url: str, timeout: float = 10.0) -> list[BaseTool]:
-    """Discovery reale: un `BaseTool` per ogni strumento pubblicato dal server."""
+def scopri_strumenti(
+    url: str,
+    timeout: float = 10.0,
+    chiedi_conferma: Callable[[str], bool] | None = None,
+) -> list[BaseTool]:
+    """Discovery reale: un `BaseTool` per ogni strumento pubblicato dal server.
+
+    Gli strumenti con `destructiveHint` (letto dalla discovery, mai dal nome) chiedono
+    conferma tramite `chiedi_conferma` prima di essere eseguiti.
+    """
     try:
         scoperti = _esegui(_elenca(url, timeout))
     except Exception as errore:
         raise ErroreMcp(f"discovery impossibile su {url}: {_testo_errore(errore)}") from errore
-    strumenti = [
-        StrumentoMcp(
-            name=t.name,
-            description=t.description or "",
-            args_schema=t.input_schema,
-            url=url,
-            timeout=timeout,
+    strumenti = []
+    for t in scoperti:
+        distruttivo = bool(t.annotations and t.annotations.destructive_hint)
+        strumenti.append(
+            StrumentoMcp(
+                name=t.name,
+                description=t.description or "",
+                args_schema=t.input_schema,
+                url=url,
+                timeout=timeout,
+                richiede_conferma=distruttivo,
+                chiedi_conferma=chiedi_conferma,
+                metadata={"destructiveHint": distruttivo},
+            )
         )
-        for t in scoperti
-    ]
     LOG.info("strumenti scoperti su %s: %s", url, [s.name for s in strumenti])
     return strumenti

@@ -50,6 +50,26 @@ def crea_server(archivio: ArchivioNote) -> FastMCP:
             return "Nessuna nota trovata."
         return "\n".join(f"id {n.id} | {n.creata} | {n.testo}" for n in note)
 
+    @server.tool(
+        description=(
+            "Elimina la nota con l'id indicato. L'applicazione chiede conferma all'utente "
+            'prima di cancellare. Esempio: "elimina la nota 3"'
+        ),
+        annotations={"destructiveHint": True},
+    )
+    def elimina_nota(id: int) -> str:
+        """Cancella la nota senza altre verifiche.
+
+        La conferma dell'utente non è qui: la chiede il client (il nostro agente, in base a
+        `destructiveHint`). Altri client MCP possono cancellare senza conferma.
+        """
+        try:
+            archivio.elimina(id)
+        except ErroreNote as errore:
+            raise ToolError(str(errore)) from errore
+        logger.info("nota eliminata: id %s", id)
+        return f"Nota {id} eliminata"
+
     return server
 
 

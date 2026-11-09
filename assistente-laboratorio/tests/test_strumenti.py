@@ -85,7 +85,7 @@ def config_con(**extra):
 
 def test_compone_locali_piu_mcp():
     strumenti, avvisi = componi_strumenti(
-        config_con(), scopri=lambda url, timeout: [strumento_mcp_finto]
+        config_con(), scopri=lambda url, timeout, chiedi_conferma=None: [strumento_mcp_finto]
     )
 
     assert strumenti == [orologio, strumento_mcp_finto]
@@ -93,7 +93,7 @@ def test_compone_locali_piu_mcp():
 
 
 def test_avvio_ridotto_con_avviso():
-    def scopri(url, timeout):
+    def scopri(url, timeout, chiedi_conferma=None):
         raise ErroreMcp("giù")
 
     strumenti, avvisi = componi_strumenti(config_con(MCP_URL="http://x:1/mcp"), scopri=scopri)
@@ -109,7 +109,7 @@ def test_attesa_all_avvio_server_in_ritardo():
     orologio_finto = Orologio()
     tentativi = []
 
-    def scopri(url, timeout):
+    def scopri(url, timeout, chiedi_conferma=None):
         tentativi.append(orologio_finto.t)
         if len(tentativi) < 3:
             raise ErroreMcp("non ancora")
@@ -129,7 +129,7 @@ def test_attesa_scaduta():
     orologio_finto = Orologio()
     tentativi = []
 
-    def scopri(url, timeout):
+    def scopri(url, timeout, chiedi_conferma=None):
         tentativi.append(1)
         raise ErroreMcp("giù")
 
@@ -147,7 +147,7 @@ def test_attesa_scaduta():
 def test_con_attesa_zero_un_solo_tentativo():
     tentativi = []
 
-    def scopri(url, timeout):
+    def scopri(url, timeout, chiedi_conferma=None):
         tentativi.append(1)
         raise ErroreMcp("giù")
 
@@ -162,10 +162,26 @@ def test_con_attesa_zero_un_solo_tentativo():
 def test_scopri_riceve_url_e_timeout_della_config():
     visti = []
 
-    def scopri(url, timeout):
+    def scopri(url, timeout, chiedi_conferma=None):
         visti.append((url, timeout))
         return []
 
     componi_strumenti(config_con(MCP_URL="http://h:9/mcp", MCP_TIMEOUT="3"), scopri=scopri)
 
     assert visti == [("http://h:9/mcp", 3.0)]
+
+
+def test_chiedi_conferma_viene_inoltrata_alla_discovery():
+    viste = []
+
+    def scopri(url, timeout, chiedi_conferma=None):
+        viste.append(chiedi_conferma)
+        return []
+
+    def conferma(messaggio):
+        return True
+
+    componi_strumenti(config_con(), scopri=scopri, chiedi_conferma=conferma)
+    componi_strumenti(config_con(), scopri=scopri)
+
+    assert viste == [conferma, None]

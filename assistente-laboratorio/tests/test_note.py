@@ -87,3 +87,22 @@ def test_persistenza_dopo_riavvio(tmp_path):
 
     assert [n.testo for n in seconda.elenca()] == ["sopravvive"]
     assert seconda.aggiungi("altra").id == 2
+
+
+def test_elimina_rimuove_la_nota(tmp_path):
+    archivio = crea_archivio(tmp_path)
+    archivio.aggiungi("prima")
+    archivio.aggiungi("seconda")
+
+    assert archivio.elimina(1) is None
+
+    assert [n.testo for n in archivio.elenca()] == ["seconda"]
+
+
+def test_elimina_id_inesistente(tmp_path):
+    archivio = crea_archivio(tmp_path)
+    archivio.aggiungi("prima")
+
+    with pytest.raises(ErroreNote, match="nota 99 non trovata"):
+        archivio.elimina(99)
+    assert righe(tmp_path) == [("prima",)]

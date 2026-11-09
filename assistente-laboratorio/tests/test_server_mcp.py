@@ -109,3 +109,44 @@ def test_log_di_ogni_modifica(tmp_path, caplog):
         chiama(server, "aggiungi_nota", {"testo": "ciao"})
 
     assert any("nota aggiunta" in r.getMessage() and "1" in r.getMessage() for r in caplog.records)
+
+
+def test_discovery_elimina_nota_destructive_e_senza_conferma(tmp_path):
+    _, server = crea(tmp_path)
+
+    async def scopri(url):
+        async with Client(url) as client:
+            return await client.list_tools()
+
+    with avvia_server_mcp(server) as url:
+        strumenti = {t.name: t for t in asyncio.run(scopri(url))}
+
+    elimina = strumenti["elimina_nota"]
+    assert elimina.annotations.destructive_hint is True
+    assert "conferma" not in elimina.input_schema["properties"]
+    assert list(elimina.input_schema["properties"]) == ["id"]
+    altre = strumenti["aggiungi_nota"].annotations
+    assert not (altre and altre.destructive_hint)
+
+
+def test_cancellazione_diretta(tmp_path, caplog):
+    percorso, server = crea(tmp_path)
+    ArchivioNote(percorso, adesso=lambda: ISTANTE).aggiungi("da cancellare")
+
+    with caplog.at_level(logging.INFO, logger="assistente.server_mcp"):
+        risultato = chiama(server, "elimina_nota", {"id": 1})
+
+    # La protezione è del ponte (conferma nel terminale), non del server.
+    assert risultato.content[0].text == "Nota 1 eliminata"
+    assert sqlite3.connect(percorso).execute("SELECT * FROM note").fetchall() == []
+    assert any("nota eliminata" in r.getMessage() for r in caplog.records)
+
+
+def test_id_inesistente(tmp_path):
+    percorso, server = crea(tmp_path)
+    ArchivioNote(percorso, adesso=lambda: ISTANTE).aggiungi("resta")
+
+    with pytest.raises(ToolError, match="nota 99 non trovata"):
+        chiama(server, "elimina_nota", {"id": 99})
+
+    assert sqlite3.connect(percorso).execute("SELECT testo FROM note").fetchall() == [("resta",)]

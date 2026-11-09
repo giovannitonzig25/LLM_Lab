@@ -25,6 +25,14 @@ ERRORE_SERVER = (
 )
 
 
+def chiedi_conferma(messaggio: str) -> bool:
+    """Conferma di un'azione distruttiva, chiesta all'utente nel terminale (fuori dal modello)."""
+    try:
+        return input(f"{messaggio} [s/N]: ").strip().lower() in {"s", "si", "sì"}
+    except EOFError:
+        return False
+
+
 AVVISO_RISPOSTA_VUOTA = "(Il modello ha restituito una risposta vuota. Riprova o riformula la domanda.)"
 
 
@@ -66,7 +74,7 @@ def main() -> int:
     except ErroreConfigurazione as errore:
         print(errore, file=sys.stderr)
         return 1
-    strumenti, avvisi = componi_strumenti(config)
+    strumenti, avvisi = componi_strumenti(config, chiedi_conferma=chiedi_conferma)
     for avviso in avvisi:
         print(avviso, file=sys.stderr)
     esegui_chat(costruisci_grafo(crea_modello(config, strumenti), strumenti), config.max_passaggi, lambda: input("Tu: "), print)

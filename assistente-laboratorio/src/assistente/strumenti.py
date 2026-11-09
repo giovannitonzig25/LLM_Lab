@@ -58,6 +58,7 @@ def componi_strumenti(
     scopri: Callable[..., list[BaseTool]] = scopri_strumenti,
     dormi: Callable[[float], None] = time.sleep,
     adesso: Callable[[], float] = time.monotonic,
+    chiedi_conferma: Callable[[str], bool] | None = None,
 ) -> tuple[list[BaseTool], list[str]]:
     """Strumenti locali più quelli scoperti via MCP; restituisce (strumenti, avvisi).
 
@@ -68,7 +69,7 @@ def componi_strumenti(
     inizio = adesso()
     while True:
         try:
-            mcp = scopri(config.mcp_url, config.mcp_timeout)
+            mcp = scopri(config.mcp_url, config.mcp_timeout, chiedi_conferma=chiedi_conferma)
             return [*STRUMENTI, *mcp], []
         except ErroreMcp as errore:
             if adesso() - inizio >= config.mcp_attesa_avvio:

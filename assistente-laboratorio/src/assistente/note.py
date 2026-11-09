@@ -62,6 +62,16 @@ class ArchivioNote:
         except sqlite3.Error as errore:
             raise ErroreNote("archivio non accessibile") from errore
 
+    def elimina(self, id: int) -> None:
+        try:
+            with closing(self._connetti()) as connessione, connessione:
+                cursore = connessione.execute("DELETE FROM note WHERE id = ?", (id,))
+                trovata = cursore.rowcount > 0
+        except sqlite3.Error as errore:
+            raise ErroreNote("archivio non accessibile") from errore
+        if not trovata:
+            raise ErroreNote(f"nota {id} non trovata")
+
     def elenca(self, filtro: str | None = None, limite: int = 20) -> list[Nota]:
         """Note dalla più recente; `filtro` cerca il testo senza distinguere maiuscole."""
         if not LIMITE_MIN <= limite <= LIMITE_MAX:
