@@ -52,11 +52,20 @@ def esegui_turno(grafo, cronologia: list[BaseMessage], domanda: str, max_passagg
     return esito["messages"], risposta if risposta.strip() else AVVISO_RISPOSTA_VUOTA
 
 
+def ripulisci_input(testo: str) -> str:
+    """Sostituisce con U+FFFD i byte non validi in UTF-8 che `input()` conserva come surrogati
+    (stdin con `surrogateescape`): non sarebbero codificabili nella richiesta al modello."""
+    try:
+        return testo.encode("utf-8", errors="surrogateescape").decode("utf-8", errors="replace")
+    except UnicodeEncodeError:  # surrogato che stdin non produce (per esempio uno isolato nell'intervallo alto)
+        return testo.encode("utf-8", errors="replace").decode("utf-8")
+
+
 def esegui_chat(grafo, max_passaggi: int, leggi: Callable[[], str], scrivi: Callable[[str], None]) -> None:
     cronologia: list[BaseMessage] = []
     while True:
         try:
-            domanda = leggi().strip()
+            domanda = ripulisci_input(leggi()).strip()
             if domanda == USCITA:
                 return
             if not domanda:

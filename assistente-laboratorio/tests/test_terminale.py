@@ -227,3 +227,42 @@ def test_chiedi_conferma_del_terminale(monkeypatch):
 
     assert terminale.chiedi_conferma("Confermi: elimina_nota {'id': 3}?") is True
     assert messaggi == ["Confermi: elimina_nota {'id': 3}? [s/N]: "]
+
+
+# --- input con byte non validi (surrogati da stdin con surrogateescape) ---
+def test_input_con_byte_non_valido_non_interrompe_la_sessione():
+    grafo, modello = grafo_con("Fatto.")
+
+    stampato = esegui(grafo, ["elimina la nota \udcc2", "esci"])
+
+    assert any("Fatto." in riga for riga in stampato)
+    ricevuto = modello.chiamate[0][-1].content
+    ricevuto.encode("utf-8")  # il testo inviato al modello deve essere codificabile
+    assert ricevuto.startswith("elimina la nota ") and "�" in ricevuto
+
+
+def test_input_con_sequenza_utf8_troncata_viene_sostituito():
+    grafo, modello = grafo_con("ok")
+
+    esegui(grafo, ["caff\udcc3 e latte", "esci"])
+
+    ricevuto = modello.chiamate[0][-1].content
+    ricevuto.encode("utf-8")
+    assert "�" in ricevuto and "latte" in ricevuto
+
+
+def test_input_valido_con_accenti_e_virgolette_resta_invariato():
+    grafo, modello = grafo_con("ok")
+
+    esegui(grafo, ["Perché «città» costa 5 €?", "esci"])
+
+    assert modello.chiamate[0][-1].content == "Perché «città» costa 5 €?"
+
+
+def test_input_con_surrogato_isolato_qualsiasi_non_interrompe_la_sessione():
+    grafo, modello = grafo_con("ok")
+
+    stampato = esegui(grafo, ["prova \ud800 fine", "esci"])
+
+    assert any("ok" in riga for riga in stampato)
+    modello.chiamate[0][-1].content.encode("utf-8")
