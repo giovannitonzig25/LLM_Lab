@@ -1,9 +1,7 @@
 import asyncio
 import logging
-import socket
 import sqlite3
 import time
-from contextlib import contextmanager
 from datetime import datetime, timezone
 
 import pytest
@@ -16,7 +14,7 @@ from assistente.mcp_client import ErroreMcp, StrumentoMcp, scopri_strumenti
 from assistente.note import ArchivioNote
 from assistente.server_mcp import crea_server
 from finti import ModelloSimulato
-from server_reale import avvia_server_mcp
+from server_reale import avvia_server_mcp, porta_chiusa, porta_muta
 
 ISTANTE = datetime(2026, 11, 9, 10, 0, 0, tzinfo=timezone.utc)
 
@@ -26,25 +24,6 @@ def server(tmp_path):
     percorso = str(tmp_path / "note.db")
     with avvia_server_mcp(crea_server(ArchivioNote(percorso, adesso=lambda: ISTANTE))) as url:
         yield url, percorso
-
-
-def porta_chiusa() -> str:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        porta = s.getsockname()[1]
-    return f"http://127.0.0.1:{porta}/mcp"
-
-
-@contextmanager
-def porta_muta():
-    """Socket in ascolto che accetta connessioni ma non risponde mai."""
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    s.listen(5)
-    try:
-        yield f"http://127.0.0.1:{s.getsockname()[1]}/mcp"
-    finally:
-        s.close()
 
 
 def richiesta(nome, args, id_):
