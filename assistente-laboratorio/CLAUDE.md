@@ -22,10 +22,10 @@ Un'applicazione da terminale in Python che conversa con un modello locale e:
 
 ## Confini
 
-- Implementare solo i requisiti concordati. Altri strumenti, MCP, workflow e RAG arriveranno nelle lezioni successive: non anticiparli.  
+- Implementare solo i requisiti concordati. Sono consentiti servizi HTTP con FastAPI e server/client MCP con FastMCP (solo Streamable HTTP, niente stdio), come da specifica `docs/superpowers/specs/2026-11-03-strumenti-http-mcp-design.md` e piano collegato. Restano esclusi RAG, workflow e ogni altra tecnologia non richiesta dal laboratorio: non anticiparli.  
 - Niente interfacce grafiche, servizi cloud o framework non concordati.  
 - Lavorare solo dentro `assistente-laboratorio/`. La repository contiene altre lezioni: non leggerle per copiarne il codice e non modificarle.  
-- Lavorare nel branch corrente; nessun branch o worktree nuovo se non richiesto.
+- Nessun worktree nuovo se non richiesto. Per i branch vale il flusso descritto in «Git».
 
 ## Scelte tecniche
 
@@ -33,8 +33,11 @@ Un'applicazione da terminale in Python che conversa con un modello locale e:
 - LM Studio sull'host, raggiunto tramite la sua API compatibile con OpenAI.  
 - Indirizzo del server e identificativo del modello solo da variabili d'ambiente. L'identificativo è quello restituito dal server (`GET /v1/models`), mai inventato.  
 - Un file di configurazione di esempio senza credenziali; il file reale resta fuori da Git.  
-- Docker Compose per l'applicazione; LM Studio non va containerizzato.  
-- Dipendenze motivate, concordate e con versioni fissate.  
+- Docker Compose con più servizi (`assistente`, `servizi-http`, `server-mcp`); LM Studio resta sull'host e non va containerizzato.  
+- Dipendenze motivate, concordate e con versioni fissate; quelle nuove concordate sono `fastmcp`, `fastapi`, `uvicorn`, `httpx`.  
+- «Nessuna persistenza» vale per la cronologia della conversazione. SQLite è consentito solo per i dati delle note (mai versionato).  
+- Strumenti scoperti tramite MCP: mai riscritti a mano nel client (nome, descrizione e schema vengono dalla discovery). Strumenti HTTP: wrapper `@tool` scritti a mano.  
+- Nessuno strumento cancella dati senza una conferma dell'utente raccolta dall'applicazione (terminale), indipendente da ciò che il modello scrive negli argomenti.  
 - Comandi documentati anche per PowerShell (Windows).
 
 ## Metodo: Superpowers
@@ -56,6 +59,7 @@ Un'applicazione da terminale in Python che conversa con un modello locale e:
 - Conventional Commits in italiano, per esempio `feat(grafo): ...`, `test(strumenti): ...`, `docs: ...`.  
 - Prima di ogni commit: `git status`, controllo del diff, staging selettivo dei soli file pertinenti.  
 - Mai versionare credenziali, `.env`, ambienti virtuali, cache o pesi dei modelli.  
+- Flusso dei rami: `dev` → `feat/<nome>` → review indipendente → mia approvazione esplicita → `git merge --no-ff` su `dev` → suite verde → eliminazione del ramo. Nessun merge su `main` senza mia autorizzazione.  
 - Push soltanto su mia richiesta.
 
 ## Documentazione
