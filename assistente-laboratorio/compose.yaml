@@ -1,9 +1,66 @@
 services:
+  server-mcp:
+    build: .
+    command: ["python", "-m", "assistente.server_mcp"]
+    environment:
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8001"
+      NOTE_DB_PATH: /data/note.db
+      # Usato solo dal controllo di salute (dentro il container).
+      MCP_URL: http://localhost:8001/mcp
+    volumes:
+      - dati-note:/data
+    ports:
+      - "127.0.0.1:8001:8001"
+    healthcheck:
+      # Vera discovery MCP: una semplice porta aperta non basta.
+      test: ["CMD", "python", "-m", "assistente.verifica_mcp"]
+      interval: 10s
+      timeout: 8s
+      start_period: 10s
+      retries: 3
+
+  servizi-http:
+    build: .
+    command: ["python", "-m", "assistente.servizi_http"]
+    environment:
+      SERVIZI_HOST: 0.0.0.0
+      SERVIZI_PORT: "8000"
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      # Richiesta HTTP reale a /salute (non una semplice connessione TCP).
+      test:
+        - CMD
+        - python
+        - -c
+        - "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/salute', timeout=3).status == 200 else 1)"
+      interval: 10s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+
   assistente:
     build: .
     stdin_open: true
     tty: true
     env_file: .env
+    depends_on:
+      server-mcp:
+        # Mai service_healthy: con il server fermo o non sano l'agente deve partire lo stesso
+        # (avvio ridotto, solo strumenti locali).
+        condition: service_started
+      servizi-http:
+        # Anche qui service_started: gli strumenti HTTP sono sempre registrati e un servizio
+        # spento dà `Errore: servizio non raggiungibile ...` alla chiamata.
+        condition: service_started
     environment:
       # Dentro il container "localhost" è il container stesso: si punta all'host.
       LM_STUDIO_BASE_URL: ${LM_STUDIO_DOCKER_URL:-http://host.docker.internal:1234/v1}
+      MCP_URL: ${MCP_DOCKER_URL:-http://server-mcp:8001/mcp}
+      # Secondi di attesa all'avvio perché il server MCP risponda (0 = nessuna attesa).
+      MCP_ATTESA_AVVIO: ${MCP_ATTESA_AVVIO:-20}
+      SERVIZI_BASE_URL: ${SERVIZI_DOCKER_URL:-http://servizi-http:8000}
+
+volumes:
+  dati-note:
