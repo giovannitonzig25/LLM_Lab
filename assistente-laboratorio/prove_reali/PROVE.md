@@ -139,7 +139,7 @@ Modello `google/gemma-4-e2b`, con **tutti** gli strumenti registrati (orologio, 
 | «Quanti gradi Fahrenheit sono -300 Celsius?» | provata con il modello | `Errore: temperatura sotto lo zero assoluto: -300 C`; il modello lo spiega |
 | Docker: «Quanti chilometri sono 10 miglia?», «Che ora è a Tokyo?», «Ricordami di comprare il pane» | provata con il modello | `converti_unita`, `orologio`, `aggiungi_nota`; regressione nulla |
 
-Totale: 10 domande sulla conversione con strumento giusto (8 riuscite, 2 con errore atteso), 2 controlli su altri strumenti, nessuna scelta sbagliata.
+Totale: 11 domande di conversione poste, di cui 9 con chiamata a `converti_unita` (7 riuscite, 2 con errore atteso) e 2 risolte a parole senza chiamata (vedi note); 2 controlli su altri strumenti; nessuna scelta di strumento sbagliata.
 
 ### Note
 
