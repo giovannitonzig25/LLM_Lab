@@ -38,6 +38,11 @@ Lo script elenca gli identificativi restituiti da `GET /v1/models` ed esce con e
 | `MCP_TIMEOUT` | secondi massimi per discovery e invocazione MCP (> 0), predefinito 10 |
 | `MCP_ATTESA_AVVIO` | secondi di attesa all'avvio perché il server MCP risponda (≥ 0), predefinito 0 in locale e 20 in Compose |
 | `MCP_DOCKER_URL` | solo Compose: indirizzo del server MCP visto dal container, predefinito `http://server-mcp:8001/mcp` |
+| `SERVIZI_BASE_URL` | indirizzo del servizio HTTP di date e scadenze, predefinito `http://localhost:8000` |
+| `SERVIZI_TIMEOUT` | secondi massimi per ogni richiesta al servizio (> 0), predefinito 10 |
+| `SERVIZI_DOCKER_URL` | solo Compose: indirizzo del servizio visto dal container, predefinito `http://servizi-http:8000` |
+
+Lato servizio HTTP (`python -m assistente.servizi_http`): `SERVIZI_HOST` (predefinito `127.0.0.1`), `SERVIZI_PORT` (predefinito `8000`).
 
 Lato server MCP (`python -m assistente.server_mcp`): `NOTE_DB_PATH` (file SQLite, predefinito `data/note.db`), `MCP_HOST` (predefinito `127.0.0.1`), `MCP_PORT` (predefinito `8001`).
 
@@ -65,6 +70,18 @@ Le note stanno in `data/note.db` (cartella ignorata da Git). All'avvio l'agente 
 
 **Eliminazione delle note.** `elimina_nota` è dichiarato dal server con l'annotazione MCP `destructiveHint`. Prima di chiamarlo, l'agente chiede nel terminale `Confermi: elimina_nota {'id': 3}? [s/N]`: solo `s`, `si` o `sì` fanno partire la cancellazione; qualsiasi altra risposta, Ctrl+D o l'assenza della domanda la impediscono, qualunque cosa il modello scriva negli argomenti. **Limite:** la protezione riguarda l'uso tramite questo agente. Il server da solo non verifica nulla, quindi un altro client MCP collegato alla porta 8001 può cancellare le note senza conferma.
 
+### Servizio HTTP di date e scadenze (uso locale)
+
+Gli strumenti `giorni_lavorativi` e `calcola_scadenza` chiamano un servizio FastAPI separato. Avvialo in **un'altra finestra di PowerShell**, da `assistente-laboratorio/`:
+
+```powershell
+$env:PYTHONPATH = "src"; .\.venv\Scripts\python.exe -m assistente.servizi_http
+```
+
+Endpoint: `GET /giorni-lavorativi?da=AAAA-MM-GG&a=AAAA-MM-GG`, `GET /scadenza?da=AAAA-MM-GG&giorni=N` (1-365), `GET /salute`. Sabato, domenica e festività nazionali italiane sono esclusi; il giorno di partenza di una scadenza non conta. Sono coperti solo gli anni **2026 e 2027**: date fuori da questi anni, non valide, intervalli invertiti, `giorni` fuori 1-365 o scadenze che uscirebbero dal 2027 danno `422` con un messaggio in italiano. Il risultato è indicativo, non normativo (nessuna festività patronale).
+
+Gli strumenti HTTP sono **sempre registrati**, senza discovery: se il servizio è spento il modello riceve `Errore: servizio non raggiungibile su ...` alla chiamata e la chat continua.
+
 La cronologia vale per la sessione: dentro la stessa esecuzione il modello ricorda i turni precedenti, al riavvio riparte da zero. Se un turno fallisce (per esempio server spento) la cronologia resta com'era prima della domanda.
 
 ## Avvio con Docker Compose
@@ -76,7 +93,7 @@ docker compose build
 docker compose run --rm assistente
 ```
 
-Compose avvia due servizi con la stessa immagine: `server-mcp` (porta pubblicata solo su `127.0.0.1:8001`, note nel volume `dati-note`) e `assistente`. `docker compose run --rm assistente` avvia anche il server, se non è già attivo. Lo stato del server si vede con `docker compose ps`: il controllo di salute fa una vera discovery MCP (`python -m assistente.verifica_mcp`), non solo una connessione alla porta.
+Compose avvia tre servizi con la stessa immagine: `server-mcp` (porta pubblicata solo su `127.0.0.1:8001`, note nel volume `dati-note`), `servizi-http` (solo su `127.0.0.1:8000`; il controllo di salute fa una richiesta HTTP reale a `/salute`) e `assistente`. `docker compose run --rm assistente` avvia anche il server, se non è già attivo. Lo stato del server si vede con `docker compose ps`: il controllo di salute fa una vera discovery MCP (`python -m assistente.verifica_mcp`), non solo una connessione alla porta.
 
 ```powershell
 docker compose up -d server-mcp                  # avvia solo il server (stato healthy dopo pochi secondi)
@@ -86,7 +103,9 @@ docker compose down                              # ferma tutto: le note restano 
 docker compose down -v                           # ferma tutto E cancella le note
 ```
 
-L'agente in Compose usa `MCP_URL=http://server-mcp:8001/mcp` (`MCP_DOCKER_URL` per cambiarlo) e aspetta fino a `MCP_ATTESA_AVVIO` secondi (20) che il server risponda.
+L'agente in Compose usa `SERVIZI_BASE_URL=http://servizi-http:8000` (`SERVIZI_DOCKER_URL` per cambiarlo) e `MCP_URL=http://server-mcp:8001/mcp` (`MCP_DOCKER_URL` per cambiarlo) e aspetta fino a `MCP_ATTESA_AVVIO` secondi (20) che il server risponda.
+
+Anche `servizi-http` è una dipendenza con `condition: service_started`: se è fermo l'agente parte lo stesso e gli strumenti HTTP rispondono `Errore: servizio non raggiungibile ...` (provato con `docker compose run --rm --no-deps assistente`).
 
 **Avvio ridotto in Docker.** L'agente dipende da `server-mcp` con `condition: service_started`, non da `service_healthy`: se il server è fermo, in crash o non sano, l'agente parte comunque con il solo `orologio` e l'avviso. Se invece il server **non riesce nemmeno a partire** (per esempio la porta 8001 dell'host è occupata), `docker compose run --rm assistente` fallisce perché Compose non avvia la dipendenza («ports are not available»). In quel caso usa:
 

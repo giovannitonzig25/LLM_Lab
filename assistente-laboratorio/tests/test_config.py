@@ -67,3 +67,16 @@ def test_mcp_attesa_avvio_non_valida(valore):
 
 def test_mcp_attesa_avvio_zero_e_valida():
     assert carica_config({**BASE, "MCP_ATTESA_AVVIO": "0"}).mcp_attesa_avvio == 0.0
+
+
+def test_variabili_servizi_predefiniti_e_valide():
+    config = carica_config(BASE)
+    assert (config.servizi_base_url, config.servizi_timeout) == ("http://localhost:8000", 10.0)
+    config = carica_config({**BASE, "SERVIZI_BASE_URL": "http://servizi-http:8000", "SERVIZI_TIMEOUT": "2.5"})
+    assert (config.servizi_base_url, config.servizi_timeout) == ("http://servizi-http:8000", 2.5)
+
+
+@pytest.mark.parametrize("valore", ["abc", "0", "-1", "nan", "inf"])
+def test_servizi_timeout_non_valido(valore):
+    with pytest.raises(ErroreConfigurazione, match="SERVIZI_TIMEOUT"):
+        carica_config({**BASE, "SERVIZI_TIMEOUT": valore})

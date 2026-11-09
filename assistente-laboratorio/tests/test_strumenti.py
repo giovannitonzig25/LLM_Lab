@@ -67,6 +67,14 @@ def strumento_mcp_finto(x: str) -> str:
     return x
 
 
+NOMI_LOCALI = ["orologio", "converti_unita", "calcola"]
+NOMI_HTTP = ["giorni_lavorativi", "calcola_scadenza"]
+
+
+def nomi(strumenti):
+    return [s.name for s in strumenti]
+
+
 class Orologio:
     """Tempo simulato: `dormi` avanza `adesso`, nessuna attesa reale."""
 
@@ -89,7 +97,7 @@ def test_compone_locali_piu_mcp():
         config_con(), scopri=lambda url, timeout, chiedi_conferma=None: [strumento_mcp_finto]
     )
 
-    assert strumenti == [*STRUMENTI, strumento_mcp_finto]
+    assert nomi(strumenti) == [*NOMI_LOCALI, *NOMI_HTTP, "strumento_mcp_finto"]
     assert avvisi == []
 
 
@@ -99,7 +107,7 @@ def test_avvio_ridotto_con_avviso():
 
     strumenti, avvisi = componi_strumenti(config_con(MCP_URL="http://x:1/mcp"), scopri=scopri)
 
-    assert strumenti == STRUMENTI
+    assert nomi(strumenti) == [*NOMI_LOCALI, *NOMI_HTTP]
     assert len(avvisi) == 1
     assert "http://x:1/mcp" in avvisi[0]
     assert "Riavvia l'agente quando il server è attivo" in avvisi[0]
@@ -121,7 +129,7 @@ def test_attesa_all_avvio_server_in_ritardo():
         dormi=orologio_finto.dormi, adesso=orologio_finto.adesso,
     )
 
-    assert strumenti == [*STRUMENTI, strumento_mcp_finto]
+    assert nomi(strumenti) == [*NOMI_LOCALI, *NOMI_HTTP, "strumento_mcp_finto"]
     assert avvisi == []
     assert tentativi == [0.0, 1.0, 2.0]
 
@@ -139,7 +147,7 @@ def test_attesa_scaduta():
         dormi=orologio_finto.dormi, adesso=orologio_finto.adesso,
     )
 
-    assert strumenti == STRUMENTI
+    assert nomi(strumenti) == [*NOMI_LOCALI, *NOMI_HTTP]
     assert len(avvisi) == 1
     assert orologio_finto.t == 3.0
     assert len(tentativi) == 4

@@ -10,6 +10,7 @@ from langchain_core.tools import BaseTool, tool
 from assistente.calcolatrice import calcola
 from assistente.config import Config
 from assistente.mcp_client import ErroreMcp, scopri_strumenti
+from assistente.strumenti_http import crea_strumenti_http
 from assistente.unita import converti_unita
 
 LOG = logging.getLogger("assistente.strumenti")
@@ -62,19 +63,21 @@ def componi_strumenti(
     adesso: Callable[[], float] = time.monotonic,
     chiedi_conferma: Callable[[str], bool] | None = None,
 ) -> tuple[list[BaseTool], list[str]]:
-    """Strumenti locali più quelli scoperti via MCP; restituisce (strumenti, avvisi).
+    """Strumenti locali, HTTP (sempre presenti) e quelli scoperti via MCP; restituisce (strumenti, avvisi).
 
     La discovery è ripetuta (pausa di 1 s) solo finché non è trascorsa l'attesa di avvio
     `mcp_attesa_avvio`; con attesa 0 c'è un solo tentativo. Se il server non risponde
     resta l'avvio ridotto (solo strumenti locali) con un avviso, senza altri tentativi.
     """
+    # Gli strumenti HTTP sono sempre registrati: un servizio spento dà `Errore:` alla chiamata.
+    http = crea_strumenti_http(config.servizi_base_url, config.servizi_timeout)
     inizio = adesso()
     while True:
         try:
             mcp = scopri(config.mcp_url, config.mcp_timeout, chiedi_conferma=chiedi_conferma)
-            return [*STRUMENTI, *mcp], []
+            return [*STRUMENTI, *http, *mcp], []
         except ErroreMcp as errore:
             if adesso() - inizio >= config.mcp_attesa_avvio:
                 LOG.warning("discovery MCP fallita, avvio ridotto: %s", errore)
-                return list(STRUMENTI), [AVVISO_MCP.format(url=config.mcp_url)]
+                return [*STRUMENTI, *http], [AVVISO_MCP.format(url=config.mcp_url)]
             dormi(1)

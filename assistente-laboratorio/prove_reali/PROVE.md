@@ -175,3 +175,39 @@ Totale: 10 domande di calcolo in due sessioni, 9 con chiamata a `calcola` (6 riu
 - **Percentuali:** il modello ha tradotto «20% di 350» in `0.20*350` da solo.
 - Il modello a volte non chiama lo strumento (100/0 la prima volta): risposta corretta, ma il percorso d'errore dello strumento è stato esercitato chiedendolo esplicitamente.
 - Non provato: operazioni con numeri molto grandi (oltre 1e15) tramite il modello, espressioni lunghe vicine ai 200 caratteri, altri modelli.
+
+## Ramo `feat/http-scadenze` — T12–T13: servizio FastAPI e strumenti HTTP (2026-11-09)
+
+Modello `google/gemma-4-e2b`, strumenti registrati: orologio, converti_unita, calcola, `giorni_lavorativi`, `calcola_scadenza` (HTTP, sempre presenti) e, in Docker, i quattro MCP. Esiti riletti dai log (`strumento richiesto/eseguito`, `assistente.http`). Input da pipe, una domanda per riga. Nei log una sola richiesta di strumento per domanda (conteggio riletto: 4 richieste per 4 domande nella prima sessione, 7 per 7 nella seconda).
+
+### Locale (servizio con `python -m assistente.servizi_http` in un processo separato, MCP spento)
+
+| Domanda | Stato | Strumento e risultato |
+|---|---|---|
+| «Quanti giorni lavorativi ci sono tra il 2 e il 20 novembre 2026?» | **provata con il modello** | `giorni_lavorativi` (2026-11-02, 2026-11-20) → 15 |
+| «Calcola la scadenza a 10 giorni lavorativi dal 9 novembre 2026.» | provata con il modello | `calcola_scadenza` (2026-11-09, 10) → 2026-11-23 |
+| «Che ora è?» | provata con il modello | `orologio`, non `giorni_lavorativi` |
+| «Tra il 24 dicembre 2026 e il 28 dicembre 2026 quanti giorni lavorativi ci sono?» | provata con il modello | `giorni_lavorativi` → 2 (Natale e Santo Stefano esclusi) |
+| «Dal 1 al 31 gennaio 2027 quanti giorni si lavora, escluse le feste?» | provata con il modello | `giorni_lavorativi` → 19 (1 e 6 gennaio esclusi) |
+| «Se un documento va consegnato entro 5 giorni lavorativi dal 24 dicembre 2026, quando scade?» | provata con il modello | `calcola_scadenza` → 2027-01-04 (verificato a mano) |
+| «Che giorno e che ora è a Tokyo?» (controllo) | provata con il modello | `orologio` Asia/Tokyo |
+| «Quanto fa 17 per 23 più 5?» / «Quanti chilometri sono 10 miglia?» (controlli) | provata con il modello | `calcola` → 396 / `converti_unita` → 16.0934 km |
+| «Quanti giorni lavorativi tra il 20 febbraio 2025 e il 3 marzo 2025?» (anno non coperto) | provata con il modello | `Errore: Parametro 'da' fuori dagli anni coperti: sono ammessi solo il 2026 e il 2027.`; il modello lo riferisce e dice di non poter calcolare |
+| «Scadenza a 400 giorni lavorativi dal 9 novembre 2026» | provata con il modello | `Errore: Parametro 'giorni' fuori intervallo: sono ammessi da 1 a 365.`; il modello lo riferisce |
+| Servizio spento: «Quanti giorni lavorativi tra il 2 e il 20 novembre 2026?» | provata con il modello | `Errore: servizio non raggiungibile su http://localhost:8000`; il modello risponde con scuse generiche («errore durante l'esecuzione») senza dire il motivo; la chat prosegue («Che ora è?» → `orologio`) |
+
+Totale: 8 domande sulle date, tutte con la chiamata allo strumento HTTP giusto (5 riuscite, 2 con errore atteso del servizio, 1 con servizio spento, quest'ultima in una sessione a parte), più 4 controlli su altri strumenti (`orologio` due volte, `calcola`, `converti_unita`) sempre con lo strumento giusto. Nessuna scelta sbagliata.
+
+### Docker Compose (LM Studio sull'host)
+
+- `docker compose build` ok (tre immagini identiche, `build: .` ripetuto); `up -d server-mcp servizi-http`: entrambi `healthy` dopo ~25 s (il controllo di `servizi-http` è una richiesta HTTP reale a `/salute`).
+- `docker compose run --rm -T assistente` con input da pipe: discovery `['aggiungi_nota', 'elenca_note', 'elimina_nota', 'meteo']`; «giorni lavorativi tra il 2 e il 20 novembre 2026» → `giorni_lavorativi` → 15; «scadenza a 10 giorni lavorativi dal 9 novembre 2026» → `calcola_scadenza` → 2026-11-23. Regressione MCP: solo la discovery è stata verificata, nessuno strumento MCP è stato invocato in questa prova. La terza domanda («Che ora è?») non ha avuto risposta perché ho interrotto la prova a 110 s (il modello è lento): non è un errore.
+- `docker compose stop servizi-http` poi `docker compose run --rm --no-deps -T assistente`: `giorni_lavorativi` → `Errore: servizio non raggiungibile su http://servizi-http:8000`. Prova interrotta a 110 s dopo l'esito dello strumento: la risposta finale del modello non è stata letta in Docker (letta nella prova locale equivalente).
+- Pulizia: `docker compose down -v`; nessun container, volume o processo in ascolto su 8000/8001.
+
+### Note
+
+- **Simulato, non provato con il modello:** timeout del servizio (solo `httpx.MockTransport`), risposte non valide, 404/500, argomenti di tipo sbagliato; `python -m assistente.servizi_http` con `SERVIZI_HOST`/`SERVIZI_PORT` non predefiniti fuori da Docker (in Docker `SERVIZI_HOST=0.0.0.0` provato).
+- **Servizio spento:** il modello non dice all'utente che il servizio non è raggiungibile (scusa generica); già osservato con altri strumenti (handoff, §6).
+- **Anni coperti:** il servizio rifiuta date fuori 2026–2027 e scadenze che uscirebbero dal 2027 (festività non note): scelta di progetto, non un difetto.
+- Non provato: altri modelli; invocazione di strumenti MCP in questo ramo (provata in T7–T9); avvio ridotto con `server-mcp` fermo in questo ramo (provato in T7); `servizi-http` fermo con `run` senza `--no-deps` (Compose lo riavvia come dipendenza).
