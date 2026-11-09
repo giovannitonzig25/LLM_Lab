@@ -12,7 +12,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src ./src
 COPY prove_reali ./prove_reali
 
-RUN useradd --create-home --uid 1000 app
+# /data: cartella del volume `dati-note`, scrivibile dall'utente non root.
+RUN useradd --create-home --uid 1000 app && mkdir /data && chown app /data
 USER app
 
 CMD ["python", "-m", "assistente.terminale"]

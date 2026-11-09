@@ -10,7 +10,7 @@ from langchain_core.messages import BaseMessage, HumanMessage
 from assistente.config import ErroreConfigurazione, carica_config
 from assistente.grafo import costruisci_grafo
 from assistente.modello import crea_modello
-from assistente.strumenti import STRUMENTI
+from assistente.strumenti import componi_strumenti
 
 LOG = logging.getLogger("assistente.terminale")
 USCITA = "esci"
@@ -23,6 +23,14 @@ ERRORE_SERVER = (
     "Controlla che LM Studio sia attivo e che LM_STUDIO_BASE_URL e LM_STUDIO_MODEL "
     "corrispondano a quanto elencato da GET /v1/models."
 )
+
+
+def chiedi_conferma(messaggio: str) -> bool:
+    """Conferma di un'azione distruttiva, chiesta all'utente nel terminale (fuori dal modello)."""
+    try:
+        return input(f"{messaggio} [s/N]: ").strip().lower() in {"s", "si", "sì"}
+    except EOFError:
+        return False
 
 
 AVVISO_RISPOSTA_VUOTA = "(Il modello ha restituito una risposta vuota. Riprova o riformula la domanda.)"
@@ -66,7 +74,10 @@ def main() -> int:
     except ErroreConfigurazione as errore:
         print(errore, file=sys.stderr)
         return 1
-    esegui_chat(costruisci_grafo(crea_modello(config, STRUMENTI), STRUMENTI), config.max_passaggi, lambda: input("Tu: "), print)
+    strumenti, avvisi = componi_strumenti(config, chiedi_conferma=chiedi_conferma)
+    for avviso in avvisi:
+        print(avviso, file=sys.stderr)
+    esegui_chat(costruisci_grafo(crea_modello(config, strumenti), strumenti), config.max_passaggi, lambda: input("Tu: "), print)
     return 0
 
 

@@ -34,6 +34,12 @@ Lo script elenca gli identificativi restituiti da `GET /v1/models` ed esce con e
 | `LM_STUDIO_BASE_URL` | indirizzo del server, per esempio `http://localhost:1234/v1` (obbligatoria) |
 | `LM_STUDIO_MODEL` | identificativo del modello (obbligatoria) |
 | `MAX_PASSAGGI` | limite di passaggi del grafo, predefinito 6 |
+| `MCP_URL` | indirizzo del server MCP delle note, predefinito `http://localhost:8001/mcp` |
+| `MCP_TIMEOUT` | secondi massimi per discovery e invocazione MCP (> 0), predefinito 10 |
+| `MCP_ATTESA_AVVIO` | secondi di attesa all'avvio perché il server MCP risponda (≥ 0), predefinito 0 in locale e 20 in Compose |
+| `MCP_DOCKER_URL` | solo Compose: indirizzo del server MCP visto dal container, predefinito `http://server-mcp:8001/mcp` |
+
+Lato server MCP (`python -m assistente.server_mcp`): `NOTE_DB_PATH` (file SQLite, predefinito `data/note.db`), `MCP_HOST` (predefinito `127.0.0.1`), `MCP_PORT` (predefinito `8001`).
 
 ## Avvio
 
@@ -45,6 +51,20 @@ $env:PYTHONPATH = "src"; .\.venv\Scripts\python.exe -m assistente.terminale
 
 Uscita: `esci`, Ctrl+C o Ctrl+D.
 
+### Server MCP delle note (uso locale)
+
+Gli strumenti `aggiungi_nota`, `elenca_note` ed `elimina_nota` sono esposti da un server MCP (Streamable HTTP) che gira come processo separato. Avvialo in **un'altra finestra di PowerShell**, sempre da `assistente-laboratorio/`, e poi avvia l'agente come sopra:
+
+```powershell
+$env:PYTHONPATH = "src"; .\.venv\Scripts\python.exe -m assistente.server_mcp
+```
+
+Le note stanno in `data/note.db` (cartella ignorata da Git). All'avvio l'agente fa la discovery degli strumenti: nei log compare `strumenti scoperti su http://localhost:8001/mcp: [...]`.
+
+**Avvio ridotto.** Se il server MCP non risponde, l'agente parte lo stesso con i soli strumenti locali (`orologio`) e scrive su stderr «Server MCP non raggiungibile su …». La discovery non viene ripetuta nei turni successivi: riavvia l'agente quando il server è attivo. Con `MCP_ATTESA_AVVIO` maggiore di 0 l'agente riprova ogni secondo, ma solo all'avvio.
+
+**Eliminazione delle note.** `elimina_nota` è dichiarato dal server con l'annotazione MCP `destructiveHint`. Prima di chiamarlo, l'agente chiede nel terminale `Confermi: elimina_nota {'id': 3}? [s/N]`: solo `s`, `si` o `sì` fanno partire la cancellazione; qualsiasi altra risposta, Ctrl+D o l'assenza della domanda la impediscono, qualunque cosa il modello scriva negli argomenti. **Limite:** la protezione riguarda l'uso tramite questo agente. Il server da solo non verifica nulla, quindi un altro client MCP collegato alla porta 8001 può cancellare le note senza conferma.
+
 La cronologia vale per la sessione: dentro la stessa esecuzione il modello ricorda i turni precedenti, al riavvio riparte da zero. Se un turno fallisce (per esempio server spento) la cronologia resta com'era prima della domanda.
 
 ## Avvio con Docker Compose
@@ -55,6 +75,26 @@ LM Studio resta sull'host; nel container l'indirizzo è `http://host.docker.inte
 docker compose build
 docker compose run --rm assistente
 ```
+
+Compose avvia due servizi con la stessa immagine: `server-mcp` (porta pubblicata solo su `127.0.0.1:8001`, note nel volume `dati-note`) e `assistente`. `docker compose run --rm assistente` avvia anche il server, se non è già attivo. Lo stato del server si vede con `docker compose ps`: il controllo di salute fa una vera discovery MCP (`python -m assistente.verifica_mcp`), non solo una connessione alla porta.
+
+```powershell
+docker compose up -d server-mcp                  # avvia solo il server (stato healthy dopo pochi secondi)
+docker compose run --rm --no-deps assistente python -m assistente.verifica_mcp   # discovery dal container: esce con 0 e stampa gli strumenti
+docker compose logs server-mcp                   # log del server
+docker compose down                              # ferma tutto: le note restano nel volume
+docker compose down -v                           # ferma tutto E cancella le note
+```
+
+L'agente in Compose usa `MCP_URL=http://server-mcp:8001/mcp` (`MCP_DOCKER_URL` per cambiarlo) e aspetta fino a `MCP_ATTESA_AVVIO` secondi (20) che il server risponda.
+
+**Avvio ridotto in Docker.** L'agente dipende da `server-mcp` con `condition: service_started`, non da `service_healthy`: se il server è fermo, in crash o non sano, l'agente parte comunque con il solo `orologio` e l'avviso. Se invece il server **non riesce nemmeno a partire** (per esempio la porta 8001 dell'host è occupata), `docker compose run --rm assistente` fallisce perché Compose non avvia la dipendenza («ports are not available»). In quel caso usa:
+
+```powershell
+docker compose run --rm --no-deps assistente
+```
+
+che non avvia il server e dà l'avvio ridotto.
 
 Per controllare dal container che l'host sia raggiungibile e il modello presente:
 
