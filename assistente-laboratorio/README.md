@@ -80,6 +80,10 @@ $env:PYTHONPATH = "src"; .\.venv\Scripts\python.exe -m assistente.servizi_http
 
 Endpoint: `GET /giorni-lavorativi?da=AAAA-MM-GG&a=AAAA-MM-GG`, `GET /scadenza?da=AAAA-MM-GG&giorni=N` (1-365), `GET /salute`. Sabato, domenica e festività nazionali italiane sono esclusi; il giorno di partenza di una scadenza non conta. Sono coperti solo gli anni **2026 e 2027**: date fuori da questi anni, non valide, intervalli invertiti, `giorni` fuori 1-365 o scadenze che uscirebbero dal 2027 danno `422` con un messaggio in italiano. Il risultato è indicativo, non normativo (nessuna festività patronale).
 
+### Catalogo dei corsi (fittizio)
+
+Lo stesso servizio espone un catalogo di 10 corsi **fittizi** (nessun dato reale: titoli, sedi e descrizioni sono inventati per il laboratorio, il file è `src/assistente/servizi_http/dati/catalogo.json`) e ogni risposta lo ricorda. Endpoint: `GET /catalogo?q=<testo>&max_risultati=N` (`q` obbligatorio, al massimo 100 caratteri; `max_risultati` da 1 a 10, predefinito 5) e `GET /catalogo/{codice}` (per esempio `ITS-003`, 404 se inesistente). La ricerca ignora maiuscole e accenti e cerca solo in titolo, settore e sede (con più parole devono comparire tutte); i risultati contengono codice, titolo, settore e sede, mentre durata e descrizione compaiono solo nel dettaglio. Gli strumenti sono `cerca_catalogo` (parola chiave) e `dettaglio_catalogo` (codice noto); una ricerca senza risultati dà `Nessun corso trovato ...` e un codice inesistente `Errore: corso <codice> non trovato`.
+
 Gli strumenti HTTP sono **sempre registrati**, senza discovery: se il servizio è spento il modello riceve `Errore: servizio non raggiungibile su ...` alla chiamata e la chat continua.
 
 La cronologia vale per la sessione: dentro la stessa esecuzione il modello ricorda i turni precedenti, al riavvio riparte da zero. Se un turno fallisce (per esempio server spento) la cronologia resta com'era prima della domanda.

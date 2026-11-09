@@ -1,0 +1,12 @@
+[
+  {"codice": "ITS-001", "titolo": "Sviluppo software e applicazioni web", "settore": "Informatica", "sede": "Udine", "durata_ore": 1800, "descrizione": "Corso di esempio su programmazione, basi di dati e sviluppo di applicazioni web, con tirocinio in azienda."},
+  {"codice": "ITS-002", "titolo": "Sicurezza informatica e reti", "settore": "Informatica", "sede": "Pordenone", "durata_ore": 1800, "descrizione": "Corso di esempio su amministrazione di reti, difesa dei sistemi e gestione degli incidenti."},
+  {"codice": "ITS-003", "titolo": "Analisi dei dati e intelligenza artificiale", "settore": "Informatica", "sede": "Udine", "durata_ore": 1600, "descrizione": "Corso di esempio su statistica applicata, apprendimento automatico e visualizzazione dei dati."},
+  {"codice": "ITS-004", "titolo": "Automazione industriale e robotica", "settore": "Meccatronica", "sede": "Pordenone", "durata_ore": 2000, "descrizione": "Corso di esempio su PLC, sensori, robot collaborativi e linee di produzione automatizzate."},
+  {"codice": "ITS-005", "titolo": "Manutenzione di impianti meccatronici", "settore": "Meccatronica", "sede": "Udine", "durata_ore": 1800, "descrizione": "Corso di esempio su diagnostica, manutenzione predittiva e sicurezza degli impianti."},
+  {"codice": "ITS-006", "titolo": "Logistica e trasporti intermodali", "settore": "Logistica", "sede": "Trieste", "durata_ore": 1800, "descrizione": "Corso di esempio su gestione dei magazzini, spedizioni e trasporto combinato strada-mare-ferrovia."},
+  {"codice": "ITS-007", "titolo": "Gestione della filiera agroalimentare", "settore": "Agroalimentare", "sede": "Gorizia", "durata_ore": 1600, "descrizione": "Corso di esempio su qualità, tracciabilità e commercializzazione dei prodotti alimentari."},
+  {"codice": "ITS-008", "titolo": "Efficienza energetica ed energie rinnovabili", "settore": "Energia", "sede": "Trieste", "durata_ore": 1800, "descrizione": "Corso di esempio su diagnosi energetiche, impianti fotovoltaici e gestione dell'energia negli edifici."},
+  {"codice": "ITS-009", "titolo": "Turismo digitale e promozione del territorio", "settore": "Turismo", "sede": "Gorizia", "durata_ore": 1600, "descrizione": "Corso di esempio su marketing turistico online, accoglienza e valorizzazione dei beni culturali."},
+  {"codice": "ITS-010", "titolo": "Design e prototipazione 3D", "settore": "Design", "sede": "Udine", "durata_ore": 1700, "descrizione": "Corso di esempio su modellazione 3D, stampa additiva e sviluppo di prodotto."}
+]
