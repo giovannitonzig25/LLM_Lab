@@ -247,3 +247,70 @@ Totale: 10 domande sul catalogo in due sessioni (6 + 4) e 3 controlli su altri s
 - **Dichiarazione «fittizi»:** il servizio la include in ogni risposta e il wrapper la riporta; nelle risposte del modello compare di solito («i corsi sono fittizi»), ma in una risposta (Docker) è stata abbreviata in «Il catalogo è di esempio».
 - **Il modello a volte aggiunge commenti propri** (per esempio «Ti consiglio di verificare i dettagli di questo corso»): innocui, non inventano dati.
 - Non provato: altri modelli, catalogo con molti più corsi, `max_risultati` scelto dal modello.
+
+## T15 — Verifica finale dell'agente completo, su `dev` (2026-11-09)
+
+`dev` all'ultimo merge `a1866a6`, 403 test automatici verdi. Modello `google/gemma-4-e2b`, LM Studio sull'host, Docker 29.2.0, Compose v5.0.2. Tutte le prove di questa sezione sono in **Docker Compose**, con **tutti gli 11 strumenti registrati insieme** (orologio, converti_unita, calcola, giorni_lavorativi, calcola_scadenza, cerca_catalogo, dettaglio_catalogo, aggiungi_nota, elenca_note, elimina_nota, meteo). Esiti riletti dai log (`strumento richiesto/eseguito`, `strumenti scoperti`). Input da pipe con `docker compose run --rm -T assistente`.
+
+### Preparazione da zero
+
+`docker compose down -v`, `docker compose build`, `up -d server-mcp servizi-http`: entrambi `healthy` dopo ~25 s. `docker compose run --rm --no-deps assistente python -m assistente.verifica_mcp` → exit 0, `Discovery MCP riuscita su http://server-mcp:8001/mcp: aggiungi_nota, elenca_note, elimina_nota, meteo`.
+
+### Batteria da 22 domande in una sessione (due formulazioni per strumento)
+
+| Strumento | Domande | Esito con il modello |
+|---|---|---|
+| `orologio` | «Che ore sono a Tokyo?», «Che ora è a New York?» | 2/2 (`Asia/Tokyo`, `America/New_York`) |
+| `converti_unita` | «Quanti chilometri sono 10 miglia?», «Quanti gradi Celsius sono 100 gradi Fahrenheit?» | 2/2 |
+| `calcola` | «Quanto fa 17 per 23 più 5?», «Calcola (12+8)*3.» | 2/2 |
+| `giorni_lavorativi` | 2–20 novembre 2026; gennaio 2027 | 2/2 (15 e 19) |
+| `calcola_scadenza` | 10 giorni dal 9 novembre 2026; 5 giorni dal 24 dicembre 2026 | 2/2 |
+| `cerca_catalogo` | «Che corsi ci sono a Udine?»; «Quali corsi di logistica avete?» | 1/2: **la seconda non ha chiamato nessuno strumento** |
+| `dettaglio_catalogo` | «Dimmi la durata del corso ITS-003.»; «Quanto dura il corso di design e prototipazione 3D?» | 1/2: **la seconda non ha chiamato nessuno strumento** (ha chiesto il codice) |
+| `aggiungi_nota` | «Ricordami di consegnare il report venerdì.»; «Segna questa nota: chiamare il fornitore.» | 2/2 |
+| `elenca_note` | «Elenca le mie note.»; «Che note ho salvato?» | 1/2: **la seconda risolta dalla cronologia, senza chiamare lo strumento** |
+| `meteo` | «Che tempo fa a Bologna?»; «Piove a Forlì?» | 1/2: **la seconda senza chiamata** («non ho informazioni sul meteo») |
+
+Totale: 22 domande, 18 con lo strumento giusto, **4 senza alcuna chiamata** (le domande 14, 16, 20 e 22 della sessione), **0 scambi tra strumenti** (nessuno strumento sbagliato chiamato). 16 richieste di strumento nella sessione.
+
+**Ripetizione delle 4 domande mancate** (3 volte ciascuna, ogni volta in una **sessione nuova** con una sola domanda, 11 strumenti, due note preparate nel server): logistica → `cerca_catalogo` 3/3; design 3D → `cerca_catalogo` poi `dettaglio_catalogo` (ITS-010) 3/3; «Che note ho salvato?» → `elenca_note` 3/3; «Piove a Forlì?» → `meteo` 3/3. **12/12.**
+
+Lettura (decisione dell'utente il 2026-11-09: **limite documentato**, nessuna modifica a descrizioni, grafo o prompt): con le stesse descrizioni il modello sceglie lo strumento giusto in sessioni nuove, mentre in una sessione lunga ha saltato lo strumento 4 volte su 22 e anche altrove (vedi sotto). I dati sono coerenti con un effetto della cronologia lunga, ma **non è stato isolato** (campione piccolo, una sola sessione lunga, modello non deterministico). Non provato: una seconda sessione lunga.
+
+### Conferma di `elimina_nota` con il modello (sequenza lineare di input)
+
+| Passo | Esito |
+|---|---|
+| «Elimina la nota 99.» → `[s/N]` → `s` | `elimina_nota {'id': 99}` → `Errore: nota 99 non trovata`; il modello: «Non ho trovato la nota con l'ID 99.» |
+| «Cancella la nota 2.» → `[s/N]` → `n` | la chiamata al server non parte: `Errore: cancellazione non confermata dall'utente`; la nota esiste ancora («Elenca le mie note» le mostra entrambe) |
+| «Elimina la nota 2.» (stessa sessione, dopo il rifiuto) | **il modello non ha chiamato lo strumento**: ha ripetuto a memoria «Non sono riuscito a eliminare la nota 2 perché non è stata confermata»; il successivo `s` è stato letto come domanda normale (disallineamento già noto con l'input da pipe). Nessuna cancellazione senza conferma |
+| Sessione nuova: «Elimina la nota 2.» → `[s/N]` → `s` | `elimina_nota {'id': 2}` → `Nota 2 eliminata`; «Elenca le mie note» mostra solo la nota 1 |
+
+La conferma è sempre arrivata dal terminale, mai dal modello; nessuna cancellazione è avvenuta senza `s`.
+
+### Avvio ridotto sul Compose a tre servizi
+
+- **A. `server-mcp` in crash** (`docker kill -s KILL`, exit 137), `servizi-http` attivo, `docker compose run --rm --no-deps -T assistente`: avviso «Server MCP non raggiungibile su http://server-mcp:8001/mcp ... Riavvia l'agente quando il server è attivo»; «Che ora è a Tokyo?» → `orologio`; «giorni lavorativi tra il 2 e il 20 novembre 2026» → `giorni_lavorativi` → 15 (gli strumenti HTTP restano utilizzabili). Il modello ha aggiunto una frase **sbagliata**: «questo calcolo ... non tiene conto delle festività nazionali italiane», mentre il risultato del servizio dice il contrario.
+- **B. `servizi-http` fermo**, `server-mcp` riavviato, `--no-deps`: discovery MCP riuscita; «Che corsi ci sono a Udine?» → `cerca_catalogo` → `Errore: servizio non raggiungibile su http://servizi-http:8000`, il modello: «non sono riuscito a trovare i corsi ... a causa di un errore del servizio»; «Elenca le mie note.» → `elenca_note` ok; «Che ora è a Tokyo?» → `orologio`.
+- **Porta 8001 occupata e `server-mcp` non avviabile:** provato in T6 (casi E1 `run` fallisce, E2 `--no-deps` avvio ridotto con `orologio`) **e non ripetuto in T15**; lo stesso discorso vale per `servizi-http` e la porta 8000 (Compose si comporta allo stesso modo: la dipendenza non parte → `run` fallisce, `--no-deps` funziona; non provato esplicitamente).
+
+### Criteri di verifica finale (spec §8), uno per riga
+
+| # | Criterio | Stato | Evidenza |
+|---|---|---|---|
+| 1 | Tutte le nuove funzionalità disponibili e utilizzabili | **provato con il modello** | tutti e 11 gli strumenti chiamati almeno una volta nella batteria o nella prova di conferma (`elimina_nota` solo dopo la sessione nuova) |
+| 2 | L'orologio continua a funzionare | provato | Tokyo, New York in batteria; Tokyo anche in avvio ridotto A e B |
+| 3 | Selezione corretta con formulazioni diverse | **parziale, limite documentato** | batteria: 18/22 corrette, 4 senza chiamata, 0 scambi; ripetizione in sessioni nuove 12/12; l'utente ha scelto di documentare il limite (nessun intervento sulle descrizioni) |
+| 4 | Discovery e invocazioni MCP reali nei log | provato | `strumenti scoperti su http://server-mcp:8001/mcp: [...]`; `verifica_mcp` exit 0 con i quattro nomi; invocazioni di `aggiungi_nota`, `elenca_note`, `elimina_nota`, `meteo` |
+| 5 | Risultati associati al `tool_call_id` corretto | **solo simulato** | test automatici (`test_instradamento.py::test_due_richieste_nello_stesso_messaggio`, `test_mcp_client.py::test_due_richieste_nello_stesso_messaggio`, `test_due_turni_del_grafo_con_finto_modello`); con il modello i log di testo non mostrano gli identificativi, le risposte sono coerenti con i risultati degli strumenti |
+| 6 | Errori gestiti in modo chiaro | provato (timeout: simulato) | servizio spento (T13, T15-B); input non valido (anno 2025, 400 giorni: T13; codice ITS-999: T14); ID inesistente (nota 99, T15); timeout solo con `httpx.MockTransport`/server finto nei test |
+| 7 | Cronologia, limite passaggi e interruzioni | provato (non ripetuto con 11 strumenti) | cronologia: «Mi chiamo Marco.» → «Come mi chiamo?» → «Ti chiami Marco.» (T15); `MAX_PASSAGGI=2` e Ctrl+C (al prompt e durante la risposta) provati nelle prove iniziali (tabella in testa a questo file, Ctrl+C riferito dall'utente) e coperti da test (`test_limite.py`, `test_terminale.py`) |
+| 8 | Docker Compose come da istruzioni, vera discovery, avvio ridotto | provato | build, tre servizi da zero, `healthy`, `verifica_mcp` exit 0 con i nomi, agente con log; avvio ridotto con `server-mcp` in crash (A) e `servizi-http` fermo (B); server fermo e porta occupata provati in T6, non ripetuti |
+| 9 | Test e prove documentati, simulato vs provato | questo file | 403 test automatici verdi; sezioni per ramo con la distinzione |
+
+### Altre osservazioni sul modello (T15)
+
+- **Cronologia al posto dello strumento:** oltre alle 4 mancanze della batteria, nella prova di conferma il modello ha ripetuto a memoria l'esito di una cancellazione precedente invece di richiamare `elimina_nota`; senza conferma dell'utente non cancella comunque nulla.
+- **Frasi aggiunte non fondate:** in A il commento sulle festività contraddice il risultato dello strumento.
+- **Servizio spento:** il modello riferisce «un errore del servizio» ma non il motivo preciso (già osservato).
+- Non provato: altri modelli; sessioni lunghe ripetute; il timeout reale dei servizi; Ctrl+C con tutti gli strumenti in Docker.

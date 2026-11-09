@@ -127,6 +127,22 @@ docker compose run --rm --entrypoint python assistente prove_reali/verifica_mode
 
 Se l'host non è raggiungibile controlla che il server di LM Studio sia attivo e la porta; se non basta, in LM Studio abilita «Serve on Local Network». Nelle prove fatte con Docker Desktop su Windows non è stato necessario aggiungere `extra_hosts`.
 
+## Strumenti disponibili
+
+Il modello dispone di 11 strumenti, composti all'avvio. Sono i locali, i wrapper HTTP (sempre registrati) e quelli **scoperti** dal server MCP (nome, descrizione e schema vengono dalla discovery, non sono scritti nel client).
+
+| Strumento | Dove gira | Cosa fa |
+|---|---|---|
+| `orologio` | locale | data e ora in un fuso IANA |
+| `converti_unita` | locale | conversione tra unità di un elenco chiuso (lunghezza, massa, volume, temperatura) |
+| `calcola` | locale | espressioni con `+ - * / **` e parentesi (con `ast`, mai `eval`) |
+| `giorni_lavorativi`, `calcola_scadenza` | servizio FastAPI | giorni lavorativi e scadenze (anni 2026-2027, risultato non normativo) |
+| `cerca_catalogo`, `dettaglio_catalogo` | servizio FastAPI | catalogo di 10 corsi **fittizi** |
+| `aggiungi_nota`, `elenca_note`, `elimina_nota` | server MCP | note in SQLite; `elimina_nota` chiede conferma nel terminale |
+| `meteo` | server MCP | tempo attuale da Open-Meteo (serve Internet) |
+
+Nei log su stderr compaiono `strumenti scoperti su ...` (discovery MCP), `strumento richiesto` e `strumento eseguito` per ogni chiamata.
+
 ## Strumento orologio e log
 
 Il modello può chiedere lo strumento `orologio`, con un fuso orario IANA (`timezone`, predefinito `Europe/Rome`). Il grafo lo esegue davvero e restituisce il risultato al modello. Ogni richiesta e ogni esito compaiono nei log su stderr:
@@ -147,7 +163,11 @@ Quando il limite è raggiunto il turno viene scartato: la cronologia torna a com
 ## Struttura
 
 ```
-src/assistente/   config, modello (LM Studio), strumenti (orologio), grafo (LangGraph), terminale
+src/assistente/   config, modello (LM Studio), grafo (LangGraph), terminale
+                  strumenti (orologio e composizione), unita, calcolatrice
+                  mcp_client, verifica_mcp (client MCP e controllo di salute)
+                  server_mcp, note, meteo (server MCP)
+                  strumenti_http, servizi_http/ (wrapper e servizio FastAPI)
 tests/            test automatici, senza rete né modello
 prove_reali/      prove con LM Studio e Docker, da eseguire a mano
 docs/superpowers/ specifica e piano
@@ -155,6 +175,10 @@ docs/superpowers/ specifica e piano
 
 ## Limitazioni note
 
+- **Modello piccolo e sessioni lunghe:** con tutti gli 11 strumenti registrati, `google/gemma-4-e2b` a volte **non chiama lo strumento** e risponde a parole o dalla cronologia. In una sessione di 22 domande è successo 4 volte (catalogo, note, meteo): le stesse domande, in sessioni nuove, hanno scelto lo strumento giusto 12 volte su 12. Non è stato mai chiamato uno strumento sbagliato. Se la risposta sembra inventata o obsoleta (per esempio un elenco di note), riformula la domanda o riavvia l'agente. L'elenco delle note mostrato dal modello senza chiamata può non essere aggiornato. Vedi `prove_reali/PROVE.md`.
+- **Conferma di cancellazione:** una cancellazione non parte mai senza il tuo `s` nel terminale; se il modello non chiama `elimina_nota` non compare la domanda `[s/N]` e non viene cancellato nulla. Con input da pipe una domanda saltata disallinea le righe successive.
+- **Servizi e porte occupate:** se una porta pubblicata (8001 per `server-mcp`, 8000 per `servizi-http`) è già in uso dall'host, `docker compose run --rm assistente` fallisce perché Compose non avvia la dipendenza; usa `docker compose run --rm --no-deps assistente`. Provato per la porta 8001; per la 8000 il comportamento è quello previsto da Compose ma non è stato provato.
+- **Catalogo e date:** i corsi sono fittizi e le date sono limitate al 2026-2027.
 - **Immagine Docker:** il codice è copiato nell'immagine al momento della build. Dopo ogni modifica a `src/` esegui `docker compose build`, altrimenti `docker compose run` usa l'immagine vecchia.
 - **`MAX_PASSAGGI`:** con 1 falliscono anche le risposte senza strumento; con 2 o 3 non basta un giro completo dello strumento; ne servono almeno 4.
 - **Fuso orario:** un valore con spazi ai lati (`" Asia/Tokyo"`) viene rifiutato con un errore, e per argomenti del tipo sbagliato il messaggio restituito al modello è lungo.

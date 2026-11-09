@@ -4,11 +4,12 @@ Progetto del corso «Deep Learning e LLM: costruire chatbot e agenti». La carte
 
 ## Struttura e comandi (da `assistente-laboratorio/`, PowerShell)
 
-- `src/assistente/`: `config`, `modello` (LM Studio), `strumenti` (orologio), `grafo` (LangGraph), `terminale`. `tests/`: test automatici senza rete né modello. `prove_reali/`: prove con LM Studio e Docker, a mano.
+- `src/assistente/`: `config`, `modello` (LM Studio), `grafo` (LangGraph), `terminale`; strumenti locali `strumenti` (orologio e composizione di tutti gli strumenti all'avvio), `unita` (`converti_unita`), `calcolatrice` (`calcola`); client MCP `mcp_client` (ponte sincrono con discovery e conferma per `destructiveHint`) e `verifica_mcp` (controllo di salute); server MCP `server_mcp`, `note` (SQLite), `meteo`; strumenti HTTP `strumenti_http` (wrapper `@tool`) e servizio FastAPI `servizi_http/` (`app`, `scadenze`, `catalogo`, `dati/*.json`).
+- `tests/`: test automatici senza rete né modello (server FastMCP reale su porta libera ammesso). `prove_reali/`: prove con LM Studio e Docker, a mano, con gli esiti in `PROVE.md`.
 - Dipendenze: `requirements.txt` (esecuzione) e `requirements-dev.txt` (aggiunge `pytest`), versioni fissate.
 - Test: `.\.venv\Scripts\python.exe -m pytest -v`.
-- Avvio locale (variabili da `.env`, vedi README): `$env:PYTHONPATH = "src"; .\.venv\Scripts\python.exe -m assistente.terminale`.
-- Avvio con Docker: `docker compose run --rm assistente`.
+- Avvio locale (variabili da `.env`, vedi README), con `$env:PYTHONPATH = "src"` e tre finestre PowerShell: `.\.venv\Scripts\python.exe -m assistente.server_mcp` (porta 8001), `.\.venv\Scripts\python.exe -m assistente.servizi_http` (porta 8000), `.\.venv\Scripts\python.exe -m assistente.terminale`. Se i servizi sono spenti l'agente parte lo stesso: senza MCP solo strumenti locali e HTTP (avviso), con il servizio HTTP spento gli strumenti rispondono `Errore:`.
+- Avvio con Docker: `docker compose build` (dopo ogni modifica a `src/`), poi `docker compose run --rm assistente`; avvio ridotto se un servizio non parte: `docker compose run --rm --no-deps assistente`; pulizia `docker compose down -v`.
 
 ## Obiettivo
 
