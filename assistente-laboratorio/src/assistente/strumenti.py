@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from langchain_core.tools import BaseTool, tool
 
+from assistente.calcolatrice import calcola
 from assistente.config import Config
 from assistente.mcp_client import ErroreMcp, scopri_strumenti
 from assistente.unita import converti_unita
@@ -45,7 +46,7 @@ def orologio(timezone: str | None = FUSO_PREDEFINITO) -> str:
     return leggi_orologio(timezone)
 
 
-STRUMENTI = [orologio, converti_unita]
+STRUMENTI = [orologio, converti_unita, calcola]
 
 
 AVVISO_MCP = (
