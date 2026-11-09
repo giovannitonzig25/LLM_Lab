@@ -147,3 +147,31 @@ Totale: 11 domande di conversione poste, di cui 9 con chiamata a `converti_unita
 - **Il modello a volte non chiama lo strumento:** «Quanti chilogrammi sono 10 chilometri?» e «Converti 5 parsec in chilometri» sono state risolte a parole, senza chiamata, con risposte corrette (unità incompatibili / non supportata). I percorsi d'errore reali sono stati esercitati chiedendo esplicitamente lo strumento o con la temperatura sotto lo zero assoluto.
 - Il modello riporta il risultato con la precisione dello strumento (4 decimali).
 - Non provato: unità scritte in forme non previste (es. «chilometri», «celsius», «litro»): lo strumento le rifiuta elencando quelle ammesse; il modello ha sempre usato i simboli corretti nelle prove, ma con altri modelli potrebbe non farlo.
+
+## Ramo `feat/calcolatrice` — T11: `calcola` (2026-11-09)
+
+Modello `google/gemma-4-e2b`, con tutti gli strumenti registrati (orologio, converti_unita, calcola e i quattro MCP, server attivo). Esiti verificati nei log. Input da pipe.
+
+| Domanda | Stato | Strumento e risultato |
+|---|---|---|
+| «Quanto fa 17 per 23 più 5?» | **provata con il modello** | `calcola {'espressione': '17*23+5'}` → `396` |
+| «Calcola (12+8)*3» | provata con il modello | `calcola '(12+8)*3'` → `60` (la chiamata è comparsa **due volte** identica) |
+| «Quanto fa 2 elevato alla 10?» | provata con il modello | `calcola '2**10'` → `1024` (il modello ha scritto `**`) |
+| «Quanto fa 15 diviso 4?» | provata con il modello | `calcola '15/4'` → `3.75` |
+| «Quanto fa il 20% di 350?» | provata con il modello | `calcola '0.20*350'` → `70` |
+| «Quanto fa 7 per 6?» | provata con il modello | `calcola '7*6'` → `42` |
+| «Usa lo strumento calcola per calcolare 100/0» | provata con il modello | `Errore: divisione per zero`; il modello lo riferisce |
+| «Quanto fa 2 elevato alla 1000?» | provata con il modello | `Errore: esponente troppo grande (al massimo 100)`; il modello lo spiega |
+| «Calcola il valore assoluto di -5 e poi la radice quadrata di 16» | provata con il modello | 4 chiamate tutte in errore: `'valore assoluto di -5'` e `'radice quadrata di 16'` (testo, «espressione non valida»), poi `abs(-5)` e `sqrt(16)` («le funzioni non sono ammesse»); alla fine il modello risponde **a mente** (5 e 4, corretti) **senza dire che lo strumento non ci è riuscito** |
+| «Che ora è a Tokyo?» / «Quanti km sono 10 miglia?» / «Che tempo fa a Bologna?» (controlli) | provata con il modello | `orologio` / `converti_unita` / `meteo`, mai `calcola` |
+| Docker: «Quanto fa 17 per 23 più 5?», «Quanti km sono 10 miglia?», «Ricordami di comprare il pane» | provata con il modello | `calcola` → `396`, `converti_unita`, `aggiungi_nota`; regressione nulla |
+
+Totale: 10 domande di calcolo in due sessioni, 9 con chiamata a `calcola` (6 riuscite, 2 con errore atteso, 1 senza risultato per sintassi non ammessa) e 1 risolta a parole senza chiamata («Quanto fa 100 diviso 0?»: «La divisione per zero è indefinita»). Nessuna scelta di strumento sbagliata.
+
+### Note
+
+- **Chiamata doppia:** come per `converti_unita`, una domanda ha prodotto due chiamate identiche in uno stesso turno. Innocuo (nessun effetto collaterale), ma è la seconda volta che accade con questo modello.
+- **Funzioni non ammesse:** la calcolatrice rifiuta `abs()`, `sqrt()` e simili per scelta (solo numeri, `+ - * / **`, parentesi). Il modello le prova comunque e, se falliscono, tende a rispondere di testa senza avvisare l'utente. È un limite noto del piano, non un difetto del codice.
+- **Percentuali:** il modello ha tradotto «20% di 350» in `0.20*350` da solo.
+- Il modello a volte non chiama lo strumento (100/0 la prima volta): risposta corretta, ma il percorso d'errore dello strumento è stato esercitato chiedendolo esplicitamente.
+- Non provato: operazioni con numeri molto grandi (oltre 1e15) tramite il modello, espressioni lunghe vicine ai 200 caratteri, altri modelli.

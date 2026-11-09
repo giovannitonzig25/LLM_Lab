@@ -44,7 +44,7 @@ def test_orologio_ha_schema_con_timezone():
     assert "timezone" in orologio.args
     assert orologio.name == "orologio"
     assert orologio in STRUMENTI
-    assert [s.name for s in STRUMENTI] == ["orologio", "converti_unita"]
+    assert [s.name for s in STRUMENTI] == ["orologio", "converti_unita", "calcola"]
 
 
 def test_orologio_accetta_timezone_nullo():
