@@ -320,13 +320,13 @@ La conferma è sempre arrivata dal terminale, mai dal modello; nessuna cancellaz
 
 ## Ramo `fix/input-non-valido` — input con byte non validi in Docker (2026-11-09)
 
-**Come è emerso:** durante la prova interattiva con TTY di Ctrl+C (variante `[s/N]`) l'utente ha scritto «elimina la nota 1» e la sessione si è interrotta con `UnicodeEncodeError: 'utf-8' codec can't encode character '\udcc2' ... surrogates not allowed`, senza premere Ctrl+C. Ciò che l'utente ha digitato esattamente non è noto (ipotesi: carattere speciale incollato, oppure Backspace su un carattere a più byte).
+**Come è emerso:** durante la prova interattiva con TTY di Ctrl+C (variante `[s/N]`) l'utente ha scritto «elimina la nota 1» e la sessione si è interrotta con `UnicodeEncodeError: 'utf-8' codec can't encode character '\udcc2' ... surrogates not allowed`, senza premere Ctrl+C. Ciò che l'utente ha digitato esattamente non è noto (ipotesi: carattere speciale incollato, per esempio `«»`, `°` o uno spazio non separabile, che in UTF-8 iniziano con il byte `0xC2`; un Backspace su una lettera accentata è meno plausibile, perché le accentate italiane iniziano con `0xC3`).
 
 | Prova | Stato | Esito |
 |---|---|---|
 | Prima della correzione: `printf 'elimina la nota \xc2\n' \| docker compose run --rm --no-deps -T assistente` | **provata** | stesso traceback, `\udcc2` nella richiesta al modello (`stdin utf-8 surrogateescape` in Docker) |
 | Prima: input valido con `«»` e accenti | provata | nessun errore: il difetto riguarda solo i byte non validi |
 | Dopo la correzione e `docker compose build`: lo stesso input | **provata** | exit 0, nessun traceback; il modello risponde («fornisci l'ID della nota») |
-| Test automatici (`test_terminale.py`) | simulati | byte isolato `\udcc2`, sequenza troncata `caff\udcc3`, surrogato isolato `\ud800`: la sessione continua e il testo inviato al modello è codificabile e contiene U+FFFD; testo valido con accenti, `«»` ed `€` resta invariato |
+| Test automatici (`test_terminale.py`) | simulati | byte isolato `\udcc2`, sequenza troncata `caff\udcc3`, surrogato isolato `\ud800`: la sessione continua e il testo inviato al modello è codificabile (contiene U+FFFD per i primi due casi, `?` per il surrogato isolato fuori intervallo, che stdin non produce); testo valido con accenti, `«»` ed `€` resta invariato |
 
-Non provato: una sessione interattiva con TTY reale e Backspace su un accento (l'origine esatta del byte nella sessione dell'utente resta un'ipotesi). La correzione sostituisce i byte non validi con U+FFFD in `ripulisci_input`, quindi il modello vede il carattere sostitutivo.
+Non provato: una sessione interattiva con TTY reale con incolla di caratteri speciali (l'origine esatta del byte nella sessione dell'utente resta un'ipotesi). La correzione sostituisce i byte non validi con U+FFFD in `ripulisci_input`, quindi il modello vede il carattere sostitutivo.

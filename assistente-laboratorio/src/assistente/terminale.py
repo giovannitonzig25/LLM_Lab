@@ -54,7 +54,8 @@ def esegui_turno(grafo, cronologia: list[BaseMessage], domanda: str, max_passagg
 
 def ripulisci_input(testo: str) -> str:
     """Sostituisce con U+FFFD i byte non validi in UTF-8 che `input()` conserva come surrogati
-    (stdin con `surrogateescape`): non sarebbero codificabili nella richiesta al modello."""
+    (stdin con `surrogateescape`): non sarebbero codificabili nella richiesta al modello.
+    Un surrogato che stdin non produce viene invece sostituito con `?`."""
     try:
         return testo.encode("utf-8", errors="surrogateescape").decode("utf-8", errors="replace")
     except UnicodeEncodeError:  # surrogato che stdin non produce (per esempio uno isolato nell'intervallo alto)

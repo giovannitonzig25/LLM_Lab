@@ -183,7 +183,7 @@ docs/superpowers/ specifica e piano
 - **`MAX_PASSAGGI`:** con 1 falliscono anche le risposte senza strumento; con 2 o 3 non basta un giro completo dello strumento; ne servono almeno 4.
 - **Fuso orario:** un valore con spazi ai lati (`" Asia/Tokyo"`) viene rifiutato con un errore, e per argomenti del tipo sbagliato il messaggio restituito al modello è lungo.
 - **Errori imprevisti:** un'eccezione non legata al server del modello (per esempio una richiesta di strumento senza identificativo) interrompe la sessione.
-- **Input non valido:** i byte non validi in UTF-8 che il terminale può inviare (per esempio dopo un Backspace su un carattere accentato in una sessione interattiva di Docker, o con certi caratteri incollati) vengono sostituiti con «�» prima di essere inviati al modello: la sessione non si interrompe, ma il modello vede quel carattere sostitutivo. Conviene riscrivere la riga.
+- **Input non valido:** i byte non validi in UTF-8 che il terminale può inviare (per esempio con certi caratteri incollati come `«»`, `°` o uno spazio non separabile in una sessione interattiva di Docker) vengono sostituiti con «�» prima di essere inviati al modello: la sessione non si interrompe, ma il modello vede quel carattere sostitutivo. Conviene riscrivere la riga.
 - **Prompt:** dopo Ctrl+C o Ctrl+D il cursore può restare sulla riga di «Tu: ».
 
 ## Diagnosi
