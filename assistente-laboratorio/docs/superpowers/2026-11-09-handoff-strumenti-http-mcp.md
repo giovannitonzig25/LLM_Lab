@@ -1,6 +1,6 @@
 # Handoff — Strumenti locali, HTTP e MCP (assistente-laboratorio)
 
-Aggiornato il 2026-11-09, dopo la chiusura di T15 (T0–T15 tutti fatti). Scopo: riprendere in una nuova sessione di Claude Code senza rileggere la conversazione. Non duplica specifica e piano: li richiama.
+Aggiornato il 2026-11-09, dopo la chiusura di T15 (T0–T15 tutti fatti) e del ramo di correzione `fix/input-non-valido`. Scopo: riprendere in una nuova sessione di Claude Code senza rileggere la conversazione. Non duplica specifica e piano: li richiama.
 
 ## 1. Documenti di riferimento (approvati, definitivi)
 
@@ -13,8 +13,8 @@ Aggiornato il 2026-11-09, dopo la chiusura di T15 (T0–T15 tutti fatti). Scopo:
 
 ## 2. Stato (verificato il 2026-11-09)
 
-- **Git:** branch `dev` (unico oltre a `main`), **nessun push fatto** (`dev` è molto avanti a `origin/dev`), nessun merge su `main`. Albero pulito salvo `LLM_Lez_5.pdf` non tracciato (l'utente ha deciso di **non versionarlo**). Gli ultimi commit sono `a8da141` (verifica finale, README, `CLAUDE.md`) e `62c8b53` (porta 8000 occupata, seconda sessione lunga), più il commit di questo handoff.
-- **Test:** 403 passati (`.\.venv\Scripts\python.exe -m pytest -q` da `assistente-laboratorio/`, circa 40–80 s).
+- **Git:** branch `dev` (unico oltre a `main`), **nessun push fatto** (`dev` è molto avanti a `origin/dev`), nessun merge su `main`. Albero pulito salvo `LLM_Lez_5.pdf` non tracciato (l'utente ha deciso di **non versionarlo**). Gli ultimi commit sono `a8da141` (verifica finale, README, `CLAUDE.md`), `62c8b53` (porta 8000 occupata, seconda sessione lunga), `a478cb5` (handoff dopo T15) e il merge `c2e9cc4` di `fix/input-non-valido`, più il commit di questo aggiornamento.
+- **Test:** 407 passati (`.\.venv\Scripts\python.exe -m pytest -q` da `assistente-laboratorio/`, circa 40–80 s).
 - **Strumenti attivi (11):** locali `orologio`, `converti_unita`, `calcola`; HTTP `giorni_lavorativi`, `calcola_scadenza`, `cerca_catalogo`, `dettaglio_catalogo`; MCP `aggiungi_nota`, `elenca_note`, `elimina_nota`, `meteo`.
 - **Docker:** nessun container né volume rimasto; immagini `assistente-laboratorio-{assistente,server-mcp,servizi-http}` costruite (identiche, tre `build: .`).
 
@@ -28,6 +28,7 @@ Aggiornato il 2026-11-09, dopo la chiusura di T15 (T0–T15 tutti fatti). Scopo:
 | T12–T13 | `feat/http-scadenze` | fatto, review, approvato | `13a7591` |
 | T14 | `feat/http-catalogo` | fatto, review, approvato | `a1866a6` |
 | T15 | su `dev` | fatto (`a8da141`, `62c8b53`) | — |
+| fuori piano | `fix/input-non-valido` | fatto, review, approvato | `c2e9cc4` |
 
 ## 3. Decisioni finali da non rimettere in discussione
 
@@ -42,6 +43,7 @@ Aggiornato il 2026-11-09, dopo la chiusura di T15 (T0–T15 tutti fatti). Scopo:
 - **Dipendenze fissate:** `fastmcp==4.1.6`, `fastapi==0.162.2`, `uvicorn==0.54.0`, `httpx==0.28.1`. Nessuna verifica CVE fatta.
 - **Strumenti locali:** `@tool` con `handle_validation_error` assegnato dopo la creazione per dare una riga d'errore chiara; descrizione in italiano con esempio.
 - **Limite del modello (decisione dell'utente il 2026-11-09):** con 11 strumenti `google/gemma-4-e2b` in una sessione lunga a volte **non chiama lo strumento**; si è scelto di **documentare il limite**, senza toccare descrizioni, grafo o prompt di sistema (vedi §6).
+- **Input non valido (ramo `fix/input-non-valido`, approvato dall'utente, modifica a `terminale.py` fuori dal perimetro originario del piano):** `ripulisci_input` sostituisce con U+FFFD i byte non validi in UTF-8 letti da `input()` (surrogati di `surrogateescape`) prima di inviarli al modello; un surrogato che stdin non produce diventa `?`. Il difetto è emerso nella prova interattiva con TTY di Docker (sessione caduta con `UnicodeEncodeError: '\udcc2'`); l'origine esatta del byte (`0xC2`: per esempio `«»`, `°`, spazio non separabile incollato) resta un'ipotesi. Provato in Docker con input da pipe prima/dopo; **non** provato con una sessione TTY reale.
 - **Docker:** `docker compose run` non ha `--network`; `build` può dare un errore transitorio di snapshot (rieseguirlo).
 - **Esecuzione:** nativa (`superpowers:executing-plans`), review indipendente a fine ramo con subagente `general-purpose` modello `fable`, **approvazione dell'utente prima di ogni merge**. Merge `git merge --no-ff -m "..."` (**non** `-F`), nessun push, nessun merge su `main`.
 
@@ -57,7 +59,7 @@ Aggiornato il 2026-11-09, dopo la chiusura di T15 (T0–T15 tutti fatti). Scopo:
 
 ## 5. Da fare / decisioni aperte con l'utente
 
-- **Ctrl+C in Docker con tutti gli 11 strumenti:** non provato (richiede una sessione interattiva con TTY, a cura dell'utente: `docker compose up -d server-mcp servizi-http`, `docker compose run --rm assistente`, Ctrl+C al prompt `Tu:` e durante la risposta, poi `docker compose down -v`). Provato in Docker nelle prove iniziali con il solo orologio.
+- **Ctrl+C in Docker con tutti gli 11 strumenti:** non provato (richiede una sessione interattiva con TTY, a cura dell'utente, con l'immagine ricostruita dopo il merge: `docker compose build`, `docker compose up -d server-mcp servizi-http`, `docker compose run --rm assistente`; Ctrl+C al prompt `Tu:` e durante la risposta, poi `docker compose down -v`; scrivere le domande a mano). Provato in Docker nelle prove iniziali con il solo orologio. Nel primo tentativo dell'utente è emerso il difetto dell'input non valido (ora corretto); la variante `[s/N]` con Ctrl+C non è stata completata.
 - **Push di `dev` su `origin`:** solo su richiesta dell'utente. Nessun merge su `main` senza autorizzazione.
 - **`LLM_Lez_5.pdf`:** resta fuori da Git (deciso).
 - **Variante rispetto al PDF del corso** (nota nella specifica): il PDF presenta tutte le proposte come strumenti MCP e chiede una sola integrazione MCP; qui note e meteo sono via MCP, il resto locale o FastAPI. Il requisito minimo è soddisfatto; conviene confermare la variante con il docente.
@@ -79,6 +81,7 @@ Aggiornato il 2026-11-09, dopo la chiusura di T15 (T0–T15 tutti fatti). Scopo:
 - **Calcolatrice (T11):** `.10g` passa alla notazione scientifica sui non interi da 1e10 in su; due casi di test rifiutati per la lunghezza e non per la sintassi; test sulle nidificazioni solo con `isinstance`; rami `bool` irraggiungibili; parser permissivo su `1_0`, `0b11`, `0x1f`.
 - **Servizio date/scadenze e wrapper (T12–T13):** `RequestError` diverse dal timeout (es. `DecodingError`, `TooManyRedirects`) diventano «servizio non raggiungibile»; `int()` e `date.fromisoformat` accettano `1_0`, `+5`, `20261109`, date ISO settimanali, parametri ripetuti (vale l'ultimo); `SERVIZI_PORT=abc` dà un traceback grezzo; il `httpx.Client` non viene chiuso; nessun test verifica che `componi_strumenti` passi `servizi_base_url` e `servizi_timeout`; copertura parziale di festività (6 date su 24 controllate nei test) e del caso `2027-12-31` + 1 giorno; un'asserzione sul testo «Controlla: ...» passa anche senza `loc`.
 - **Catalogo (T14):** qualsiasi 404 su `/catalogo/<codice>` diventa «corso non trovato» anche se `SERVIZI_BASE_URL` punta a un altro servizio; `max_risultati` accetta `1_0`, `+5`, cifre Unicode; una `q` di soli segni diacritici dà 200 con 0 risultati; la ricerca per sottostringa («a») restituisce tutti i corsi, non documentata né testata; il wrapper scarta le righe se arriva `totale: 0` con righe presenti; due test deboli o accoppiati ai dati (`test_cerca_catalogo_dichiara_i_risultati_non_mostrati`, `test_catalogo_ricerca`).
+- **Input non valido:** in esecuzione locale su Windows con stdin redirezionato (cp1252, errori `strict`) i byte 0x81, 0x8D, 0x8F, 0x90, 0x9D fanno sollevare `UnicodeDecodeError` dentro `leggi()`, non intercettato da `esegui_chat` (preesistente); `esci` seguito da un byte non valido va al modello invece di uscire; una riga di soli byte non validi diventa `�` e viene inviata; il test del testo valido non copre emoji e manca un test su `esci` con byte non validi.
 - **T15:** `test_strumenti_http.py` e `test_catalogo_http.py` ricostruiscono ciascuno il proprio helper `costruisci` (duplicazione).
 
 ## 8. Avvertenze operative
