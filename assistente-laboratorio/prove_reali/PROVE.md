@@ -233,7 +233,7 @@ Modello `google/gemma-4-e2b`, 11 strumenti HTTP+locali+MCP nel caso Docker (orol
 | «Elencami i corsi che ci sono a Trieste.» | provata con il modello | `cerca_catalogo 'Trieste'` → ITS-006, ITS-008 |
 | «Quanto fa 17 per 23 più 5?» (controllo) | provata con il modello | `calcola '17*23+5'` → 396 |
 
-Totale: 10 domande sul catalogo in due sessioni (6 + 4) e 3 controlli su altri strumenti. Richieste al catalogo rilette dai log: 7 nella prima sessione e 5 nella seconda, cioè una per domanda più il secondo passo dei tre casi a due tempi. Tutte allo strumento giusto, nessuna scelta sbagliata tra catalogo, date, orologio e calcola. I due casi d'errore (nessun risultato, codice inesistente) sono stati riferiti correttamente dal modello. Nessun tentativo di inventare corsi.
+Totale: 10 domande sul catalogo in due sessioni (6 + 4) e 3 controlli su altri strumenti. Richieste al catalogo rilette dai log: 7 nella prima sessione e 5 nella seconda, cioè una per domanda più il secondo passo dei due casi a due tempi. Tutte allo strumento giusto, nessuna scelta sbagliata tra catalogo, date, orologio e calcola. I due casi d'errore (nessun risultato, codice inesistente) sono stati riferiti correttamente dal modello. Nessun tentativo di inventare corsi.
 
 ### Docker Compose
 

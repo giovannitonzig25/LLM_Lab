@@ -8,6 +8,12 @@ from langchain_core.tools import BaseTool, tool
 LOG = logging.getLogger("assistente.http")
 
 
+def _nota(corpo: dict) -> str:
+    """La nota del servizio, o testo vuoto se manca o non è testo."""
+    nota = corpo.get("nota")
+    return nota if isinstance(nota, str) else ""
+
+
 def _errore_argomenti(nome: str, attesi: str):
     def gestore(errore: Exception) -> str:
         campi = sorted({str(e["loc"][0]) for e in errore.errors() if e.get("loc")})
@@ -63,7 +69,7 @@ def crea_strumenti_http(base_url: str, timeout: float, client: httpx.Client | No
                               {"da": str, "a": str, "giorni_lavorativi": int})
         if errore:
             return errore
-        return f"Giorni lavorativi dal {corpo['da']} al {corpo['a']}: {corpo['giorni_lavorativi']}. {corpo.get('nota', '')}".strip()
+        return f"Giorni lavorativi dal {corpo['da']} al {corpo['a']}: {corpo['giorni_lavorativi']}. {_nota(corpo)}".strip()
 
     @tool
     def calcola_scadenza(data_inizio: str, giorni: int) -> str:
@@ -74,7 +80,7 @@ def crea_strumenti_http(base_url: str, timeout: float, client: httpx.Client | No
             return errore
         return (
             f"Scadenza: {corpo['data_scadenza']} ({corpo['giorni']} giorni lavorativi dopo il {corpo['da']}). "
-            f"{corpo.get('nota', '')}"
+            f"{_nota(corpo)}"
         ).strip()
 
     @tool
@@ -90,15 +96,17 @@ def crea_strumenti_http(base_url: str, timeout: float, client: httpx.Client | No
                 return "Errore: risposta del servizio non valida"
             righe.append(f"- {c['codice']}: {c['titolo']} ({c['settore']}, {c['sede']})")
         if corpo["totale"] == 0 or not righe:
-            return f"Nessun corso trovato per {query!r}. {corpo.get('nota', '')}".strip()
+            return f"Nessun corso trovato per {query!r}. {_nota(corpo)}".strip()
         intestazione = f"Corsi trovati per {query!r}: {corpo['totale']}"
         if corpo["totale"] > len(righe):
             intestazione += f" (mostrati {len(righe)}: restringi la ricerca per vedere gli altri)"
-        return "\n".join([intestazione + ".", *righe, corpo.get("nota", "")]).strip()
+        return "\n".join([intestazione + ".", *righe, _nota(corpo)]).strip()
 
     @tool
     def dettaglio_catalogo(codice: str) -> str:
         """Restituisce tutti i dati di un corso del catalogo (titolo, settore, sede, durata in ore, descrizione) dato il suo codice, per esempio ITS-003. Usalo quando il codice è già noto; per cercare per parola chiave usa cerca_catalogo. Il catalogo è di esempio, con corsi fittizi. Esempio: "dimmi la durata del corso ITS-003" → codice="ITS-003"."""
+        if codice.strip().strip(".") == "":
+            return "Errore: codice del corso mancante (per esempio ITS-003)"
         corpo, errore = chiama(
             f"/catalogo/{quote(codice.strip(), safe='')}", {},
             {"codice": str, "titolo": str, "settore": str, "sede": str, "durata_ore": int, "descrizione": str},
@@ -108,7 +116,7 @@ def crea_strumenti_http(base_url: str, timeout: float, client: httpx.Client | No
             return errore
         return (
             f"{corpo['codice']}: {corpo['titolo']}. Settore: {corpo['settore']}. Sede: {corpo['sede']}. "
-            f"Durata: {corpo['durata_ore']} ore. Descrizione: {corpo['descrizione']} {corpo.get('nota', '')}"
+            f"Durata: {corpo['durata_ore']} ore. Descrizione: {corpo['descrizione']} {_nota(corpo)}"
         ).strip()
 
     giorni_lavorativi.handle_validation_error = _errore_argomenti(

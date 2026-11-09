@@ -158,3 +158,21 @@ def test_cerca_catalogo_argomenti_sbagliati_danno_errore_chiaro():
     strumenti, richieste = costruisci(lambda r: httpx.Response(200, json=RICERCA))
     testo = strumenti["cerca_catalogo"].invoke({"query": "x", "max_risultati": "tanti"})
     assert testo.startswith("Errore:") and "cerca_catalogo" in testo and "\n" not in testo and richieste == []
+
+
+@pytest.mark.parametrize("nota", [None, 5, ["x"]])
+def test_nota_non_testuale_non_solleva(nota):
+    strumenti, _ = costruisci(lambda r: httpx.Response(200, json={**RICERCA, "nota": nota}))
+    testo = strumenti["cerca_catalogo"].invoke({"query": "Udine"})
+    assert "ITS-001" in testo and not testo.startswith("Errore")
+    strumenti, _ = costruisci(lambda r: httpx.Response(200, json={**RICERCA, "totale": 0, "risultati": [], "nota": nota}))
+    assert strumenti["cerca_catalogo"].invoke({"query": "x"}).startswith("Nessun corso trovato")
+    strumenti, _ = costruisci(lambda r: httpx.Response(200, json={**DETTAGLIO, "nota": nota}))
+    assert "1600" in strumenti["dettaglio_catalogo"].invoke({"codice": "ITS-003"})
+
+
+@pytest.mark.parametrize("codice", ["", "   ", "."])
+def test_dettaglio_con_codice_vuoto_dice_che_manca_senza_chiamare_il_servizio(codice):
+    strumenti, richieste = costruisci(lambda r: httpx.Response(200, json=DETTAGLIO))
+    testo = strumenti["dettaglio_catalogo"].invoke({"codice": codice})
+    assert testo.startswith("Errore:") and "codice" in testo and richieste == []
