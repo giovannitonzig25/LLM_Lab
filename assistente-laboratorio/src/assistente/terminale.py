@@ -10,7 +10,7 @@ from langchain_core.messages import BaseMessage, HumanMessage
 from assistente.config import ErroreConfigurazione, carica_config
 from assistente.grafo import costruisci_grafo
 from assistente.modello import crea_modello
-from assistente.strumenti import STRUMENTI
+from assistente.strumenti import componi_strumenti
 
 LOG = logging.getLogger("assistente.terminale")
 USCITA = "esci"
@@ -66,7 +66,10 @@ def main() -> int:
     except ErroreConfigurazione as errore:
         print(errore, file=sys.stderr)
         return 1
-    esegui_chat(costruisci_grafo(crea_modello(config, STRUMENTI), STRUMENTI), config.max_passaggi, lambda: input("Tu: "), print)
+    strumenti, avvisi = componi_strumenti(config)
+    for avviso in avvisi:
+        print(avviso, file=sys.stderr)
+    esegui_chat(costruisci_grafo(crea_modello(config, strumenti), strumenti), config.max_passaggi, lambda: input("Tu: "), print)
     return 0
 
 

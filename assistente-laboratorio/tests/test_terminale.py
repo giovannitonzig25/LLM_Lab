@@ -137,3 +137,25 @@ def test_contenuto_a_blocchi_vuoto_stampa_un_avviso():
 
     assert any("vuota" in riga for riga in stampato)
 
+
+
+def test_main_scrive_gli_avvisi_su_stderr_e_continua(monkeypatch, capsys):
+    from assistente import terminale
+
+    monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
+    monkeypatch.setenv("LM_STUDIO_MODEL", "m")
+    monkeypatch.setattr(
+        terminale, "componi_strumenti", lambda config: ([], ["AVVISO: server MCP assente"])
+    )
+    monkeypatch.setattr(
+        terminale, "crea_modello", lambda config, strumenti: ModelloSimulato([AIMessage("Ciao!")])
+    )
+    righe = iter(["salve", "esci"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(righe))
+
+    assert terminale.main() == 0
+
+    letto = capsys.readouterr()
+    assert "AVVISO: server MCP assente" in letto.err
+    assert "AVVISO: server MCP assente" not in letto.out
+    assert "Ciao!" in letto.out
