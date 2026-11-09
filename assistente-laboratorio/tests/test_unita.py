@@ -107,3 +107,49 @@ def test_strumento_con_valore_testuale_non_solleva():
     risultato = converti_unita.invoke({"valore": "abc", "da": "km", "a": "mi"})
 
     assert risultato.startswith("Errore:")  # nessuna eccezione sollevata da invoke
+
+
+# --- review del ramo: precisione dei valori piccoli e argomenti mancanti o di tipo sbagliato ---
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+from assistente.grafo import costruisci_grafo
+from finti import ModelloSimulato
+
+
+@pytest.mark.parametrize("valore, da, a, atteso", [
+    (2, "m", "mi", "2 m = 0.001243 mi"),
+    (1, "g", "oz", "1 g = 0.03527 oz"),
+    (5, "cm", "km", "5 cm = 5e-05 km"),
+    (0.5, "kg", "g", "0.5 kg = 500 g"),
+    (0.12345678, "m", "m", "0.1235 m = 0.1235 m"),
+])
+def test_i_risultati_piccoli_conservano_le_cifre_significative(valore, da, a, atteso):
+    assert converti(valore, da, a) == atteso
+
+
+@pytest.mark.parametrize("argomenti", [
+    {"valore": 10, "da": "km"},            # manca `a`
+    {"valore": 10, "da": 5, "a": "m"},     # `da` non è testo
+    {"valore": None, "da": "km", "a": "mi"},
+    {"valore": [1], "da": "km", "a": "mi"},
+    {},
+])
+def test_argomenti_mancanti_o_di_tipo_sbagliato_danno_un_errore_chiaro(argomenti):
+    risultato = converti_unita.invoke(argomenti)
+
+    assert risultato.startswith("Errore:")
+    assert "converti_unita" in risultato
+    assert "validation error" not in risultato and "pydantic" not in risultato
+    assert "\n" not in risultato  # una riga sola, leggibile da un modello piccolo
+
+
+def test_il_grafo_riceve_l_errore_chiaro_e_prosegue():
+    richiesta = {"name": "converti_unita", "args": {"valore": 10, "da": "km"}, "id": "x1", "type": "tool_call"}
+    modello = ModelloSimulato([AIMessage("", tool_calls=[richiesta]), AIMessage("Riprovo")])
+
+    esito = costruisci_grafo(modello, [converti_unita]).invoke({"messages": [HumanMessage("converti")]})
+
+    risposta = next(m for m in esito["messages"] if isinstance(m, ToolMessage))
+    assert risposta.tool_call_id == "x1"
+    assert risposta.content.startswith("Errore: argomenti non validi per converti_unita")
+    assert esito["messages"][-1].content == "Riprovo"

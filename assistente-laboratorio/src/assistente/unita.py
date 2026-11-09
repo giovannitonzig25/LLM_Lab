@@ -68,7 +68,9 @@ def _da_kelvin(kelvin: float, unita: str) -> float:
 def _formatta(x: float) -> str:
     if x == 0:
         return "0"
-    if 1e-3 <= abs(x) < 1e12:
+    if abs(x) < 1:
+        return f"{x:.4g}"  # cifre significative: 0.001243, non 0.0012
+    if abs(x) < 1e12:
         testo = f"{x:.4f}".rstrip("0").rstrip(".")
         return "0" if testo in ("", "-0") else testo
     return f"{x:.6g}"
@@ -107,3 +109,16 @@ def converti(valore: Any, da: Any, a: Any) -> str:
 def converti_unita(valore: float | str, da: str, a: str) -> str:
     """Converte un valore da un'unità di misura a un'altra. Unità ammesse: lunghezza mm, cm, m, km, in (pollici), ft (piedi), mi (miglia); massa g, kg, lb (libbre), oz (once); volume ml, l, gal (galloni USA); temperatura C, F, K. Esempio: "quanti chilometri sono 10 miglia?" → valore=10, da="mi", a="km"."""
     return converti(valore, da, a)
+
+
+def _errore_argomenti(errore: Exception) -> str:
+    """Una riga leggibile al posto del lungo messaggio di validazione di pydantic."""
+    campi = sorted({str(e["loc"][0]) for e in errore.errors() if e.get("loc")})
+    dettaglio = f" Controlla: {', '.join(campi)}." if campi else ""
+    return (
+        "Errore: argomenti non validi per converti_unita: servono valore (un numero), "
+        f"da e a (simboli di unità, per esempio 'km' e 'mi').{dettaglio}"
+    )
+
+
+converti_unita.handle_validation_error = _errore_argomenti
