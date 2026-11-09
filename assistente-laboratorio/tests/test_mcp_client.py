@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 from fastmcp import Client
+from fastmcp.utilities.types import Image
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool
 
@@ -332,3 +333,76 @@ def test_strumenti_non_distruttivi_non_chiedono_conferma(server):
         assert t.name in argomenti, f"aggiungere gli argomenti di prova per {t.name}"
         assert not t.invoke(argomenti[t.name]).startswith("Errore:")
     assert conferma.messaggi == []
+
+
+# --- review del ramo: validazione prima della conferma, risultati lunghi e vuoti ---
+from assistente.mcp_client import MAX_CARATTERI_RISULTATO
+
+
+@pytest.mark.parametrize(
+    "argomenti",
+    [{}, {"id": "abc"}, {"id": "2"}, {"id": True}, {"id": 2.5}, {"id": None}],
+)
+def test_argomenti_non_validi_non_chiedono_conferma_ne_cancellano(server_con_nota, argomenti):
+    url, percorso = server_con_nota
+    conferma = Conferma(esito=True)
+
+    risultato = strumento(url, "elimina_nota", conferma).invoke(argomenti)
+
+    assert risultato.startswith("Errore: argomenti non validi")
+    assert conferma.messaggi == []  # nessuna domanda all'utente per un'azione impossibile
+    assert nota_esiste(percorso)  # in particolare id=True non diventa id=1
+
+
+def test_argomento_extra_fuori_schema_non_cambia_il_percorso(server_con_nota):
+    url, percorso = server_con_nota
+    conferma = Conferma(esito=False)
+
+    risultato = strumento(url, "elimina_nota", conferma).invoke({"id": 1, "conferma": True})
+
+    assert risultato == MSG_NON_CONFERMATA
+    assert len(conferma.messaggi) == 1
+    assert nota_esiste(percorso)
+
+
+def server_di_prova_con_risultati():
+    prova = FastMCP("prova")
+
+    @prova.tool
+    def lungo() -> str:
+        """Restituisce un testo molto lungo."""
+        return "x" * (MAX_CARATTERI_RISULTATO * 3)
+
+    @prova.tool
+    def vuoto() -> str:
+        """Restituisce una stringa vuota."""
+        return ""
+
+    @prova.tool
+    def immagine() -> Image:
+        """Restituisce solo un'immagine, senza testo."""
+        return Image(data=b"\x89PNG\r\n", format="png")
+
+    return prova
+
+
+def test_risultato_troppo_lungo_viene_troncato_con_avviso():
+    with avvia_server_mcp(server_di_prova_con_risultati()) as url:
+        per_nome = {t.name: t for t in scopri_strumenti(url)}
+        risultato = per_nome["lungo"].invoke({})
+
+    assert risultato.startswith("x" * MAX_CARATTERI_RISULTATO)
+    assert "troncato" in risultato
+    assert len(risultato) < MAX_CARATTERI_RISULTATO + 300
+    assert not risultato.startswith("Errore:")
+
+
+@pytest.mark.parametrize("nome", ["vuoto", "immagine"])
+def test_risultato_vuoto_o_non_testuale_non_e_una_stringa_vuota(nome):
+    with avvia_server_mcp(server_di_prova_con_risultati()) as url:
+        per_nome = {t.name: t for t in scopri_strumenti(url)}
+        risultato = per_nome[nome].invoke({})
+
+    assert risultato.strip()
+    assert "nessun contenuto testuale" in risultato
+    assert not risultato.startswith("Errore:")

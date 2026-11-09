@@ -22,6 +22,41 @@ from langchain_core.tools import BaseTool
 
 LOG = logging.getLogger("assistente.mcp")
 
+# Tetto al testo restituito al modello: un modello locale piccolo non regge risultati enormi.
+MAX_CARATTERI_RISULTATO = 4000
+RISULTATO_VUOTO = "(nessun contenuto testuale nel risultato)"
+
+_TIPI_JSON = {
+    "string": lambda v: isinstance(v, str),
+    "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
+    "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+    "boolean": lambda v: isinstance(v, bool),
+    "array": lambda v: isinstance(v, list),
+    "object": lambda v: isinstance(v, dict),
+    "null": lambda v: v is None,
+}
+
+
+def _rispetta(proprieta: dict, valore: Any) -> bool:
+    """Controllo di tipo secondo lo schema JSON (senza coercizioni: `True` non è un intero)."""
+    if "anyOf" in proprieta:
+        return any(_rispetta(alternativa, valore) for alternativa in proprieta["anyOf"])
+    tipi = proprieta.get("type")
+    if tipi is None:
+        return True
+    return any(_TIPI_JSON.get(t, lambda v: True)(valore) for t in ([tipi] if isinstance(tipi, str) else tipi))
+
+
+def _errore_argomenti(schema: dict, argomenti: dict) -> str | None:
+    """Descrive il primo problema dei parametri dichiarati dallo schema, o None se vanno bene."""
+    for nome in schema.get("required", []):
+        if nome not in argomenti:
+            return f"manca il parametro '{nome}'"
+    for nome, proprieta in schema.get("properties", {}).items():
+        if nome in argomenti and not _rispetta(proprieta, argomenti[nome]):
+            return f"il parametro '{nome}' ha un valore non valido: {argomenti[nome]!r}"
+    return None  # i parametri fuori schema non sono controllati qui: li giudica il server
+
 
 class ErroreMcp(Exception):
     """Discovery MCP impossibile (server non raggiungibile, in ritardo o non valido)."""
@@ -59,8 +94,17 @@ async def _chiama(url: str, nome: str, argomenti: dict, timeout: float) -> str:
     async with asyncio.timeout(timeout):
         async with Client(url, timeout=timeout) as client:
             risultato = await client.call_tool(nome, argomenti)
-    testi = [blocco.text for blocco in risultato.content if hasattr(blocco, "text")]
-    return "\n".join(testi)
+    testi = [blocco.text for blocco in risultato.content if getattr(blocco, "text", None)]
+    testo = "\n".join(testi)
+    if not testo.strip():
+        return RISULTATO_VUOTO
+    if len(testo) > MAX_CARATTERI_RISULTATO:
+        return (
+            testo[:MAX_CARATTERI_RISULTATO]
+            + f"\n[Risultato troncato: {len(testo)} caratteri, mostrati i primi {MAX_CARATTERI_RISULTATO}. "
+            "Restringi la richiesta, per esempio con un filtro o un limite più basso.]"
+        )
+    return testo
 
 
 class StrumentoMcp(BaseTool):
@@ -89,8 +133,15 @@ class StrumentoMcp(BaseTool):
 
     def _run(self, **argomenti: Any) -> str:
         LOG.info("invocazione: strumento=%s argomenti=%s", self.name, argomenti)
-        if self.richiede_conferma and not self._conferma_dell_utente(argomenti):
-            return "Errore: cancellazione non confermata dall'utente"
+        if self.richiede_conferma:
+            # Prima si valida, poi si chiede: l'utente non conferma azioni impossibili e conferma
+            # solo ciò che il server eseguirà davvero (niente `id=True` letto come 1).
+            problema = _errore_argomenti(self.args_schema, argomenti)
+            if problema:
+                LOG.warning("invocazione rifiutata: strumento=%s %s", self.name, problema)
+                return f"Errore: argomenti non validi per {self.name}: {problema}"
+            if not self._conferma_dell_utente(argomenti):
+                return "Errore: cancellazione non confermata dall'utente"
         try:
             risultato = _esegui(_chiama(self.url, self.name, argomenti, self.timeout))
         except (TimeoutError, asyncio.TimeoutError):
