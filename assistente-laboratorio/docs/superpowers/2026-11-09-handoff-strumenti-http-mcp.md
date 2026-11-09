@@ -63,7 +63,7 @@ Aggiornato il 2026-11-09, dopo la chiusura di T15 (T0–T15 tutti fatti) e del r
 - **Push di `dev` su `origin`:** solo su richiesta dell'utente. Nessun merge su `main` senza autorizzazione.
 - **`LLM_Lez_5.pdf`:** resta fuori da Git (deciso).
 - **Variante rispetto al PDF del corso** (nota nella specifica): il PDF presenta tutte le proposte come strumenti MCP e chiede una sola integrazione MCP; qui note e meteo sono via MCP, il resto locale o FastAPI. Il requisito minimo è soddisfatto; conviene confermare la variante con il docente.
-- **Minori rimandati (§7):** nessuno è stato corretto; l'utente decide quali affrontare.
+- **Minori rimandati (§7):** nessuno è stato corretto. **Decisione dell'utente (2026-11-09): lasciare tutti i minori com'erano**, senza correggerli; riaprire la questione solo se l'utente lo chiede.
 
 ## 6. Osservazioni sul modello locale (`google/gemma-4-e2b`)
 
@@ -73,7 +73,7 @@ Aggiornato il 2026-11-09, dopo la chiusura di T15 (T0–T15 tutti fatti) e del r
 - Se uno strumento fallisce può rispondere di testa senza dire il motivo; non riporta l'ambiguità delle città del meteo; può aggiungere frasi non fondate (es. «non tiene conto delle festività» mentre il servizio le esclude).
 - Con input da pipe, se il modello devia le righe successive si disallineano (una conferma `[s/N]` può leggere la riga sbagliata): per prove di conferma usare sequenze lineari e sessioni nuove.
 
-## 7. Minori rimandati (nessuno è stato corretto; l'utente decide)
+## 7. Minori rimandati (nessuno corretto; l'utente ha deciso il 2026-11-09 di lasciarli com'erano)
 
 - **Note/MCP (T1–T7):** timeout del controllo di salute 8 s contro `MCP_TIMEOUT` 10 s (impostare `MCP_TIMEOUT: "5"` nel servizio `server-mcp`); `print` con emoji può fallire con output rediretto cp1252; Ctrl+C alla domanda `[s/N]` chiude la chat; tre `build: .` costruiscono l'immagine più volte; il README non dice che la domanda mostra gli argomenti scelti dal modello.
 - **Meteo (T8–T9):** `httpx.DecodingError` non intercettato (diventa errore generico dello strumento); un 3xx è «risposta non valida»; `NaN`/`Infinity` nel JSON; `name` nullo → «None: ...»; `-0.0` come «-0 °C»; il client HTTP non viene chiuso.
