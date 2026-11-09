@@ -275,7 +275,9 @@ Totale: 22 domande, 18 con lo strumento giusto, **4 senza alcuna chiamata** (le 
 
 **Ripetizione delle 4 domande mancate** (3 volte ciascuna, ogni volta in una **sessione nuova** con una sola domanda, 11 strumenti, due note preparate nel server): logistica → `cerca_catalogo` 3/3; design 3D → `cerca_catalogo` poi `dettaglio_catalogo` (ITS-010) 3/3; «Che note ho salvato?» → `elenca_note` 3/3; «Piove a Forlì?» → `meteo` 3/3. **12/12.**
 
-Lettura (decisione dell'utente il 2026-11-09: **limite documentato**, nessuna modifica a descrizioni, grafo o prompt): con le stesse descrizioni il modello sceglie lo strumento giusto in sessioni nuove, mentre in una sessione lunga ha saltato lo strumento 4 volte su 22 e anche altrove (vedi sotto). I dati sono coerenti con un effetto della cronologia lunga, ma **non è stato isolato** (campione piccolo, una sola sessione lunga, modello non deterministico). Non provato: una seconda sessione lunga.
+**Seconda sessione lunga** (stessa sequenza di 22 domande, sessione nuova, servizi ricreati): 18 corrette e **le stesse 4 domande senza chiamata** (logistica, design 3D, «Che note ho salvato?», «Piove a Forlì?»); 16 richieste di strumento, 0 scambi. Il difetto è quindi **riproducibile** nella sessione lunga e non casuale; resta non isolato se dipenda dalla lunghezza della cronologia, dal suo contenuto o dalla posizione delle domande.
+
+Lettura (decisione dell'utente il 2026-11-09: **limite documentato**, nessuna modifica a descrizioni, grafo o prompt): con le stesse descrizioni il modello sceglie lo strumento giusto in sessioni nuove, mentre in una sessione lunga ha saltato lo strumento 4 volte su 22 e anche altrove (vedi sotto). I dati (due sessioni lunghe con le stesse 4 mancanze, 12/12 corrette in sessioni nuove) sono coerenti con un effetto della cronologia lunga, ma **non è stato isolato** (non è stata variata la lunghezza né l'ordine delle domande).
 
 ### Conferma di `elimina_nota` con il modello (sequenza lineare di input)
 
@@ -292,7 +294,8 @@ La conferma è sempre arrivata dal terminale, mai dal modello; nessuna cancellaz
 
 - **A. `server-mcp` in crash** (`docker kill -s KILL`, exit 137), `servizi-http` attivo, `docker compose run --rm --no-deps -T assistente`: avviso «Server MCP non raggiungibile su http://server-mcp:8001/mcp ... Riavvia l'agente quando il server è attivo»; «Che ora è a Tokyo?» → `orologio`; «giorni lavorativi tra il 2 e il 20 novembre 2026» → `giorni_lavorativi` → 15 (gli strumenti HTTP restano utilizzabili). Il modello ha aggiunto una frase **sbagliata**: «questo calcolo ... non tiene conto delle festività nazionali italiane», mentre il risultato del servizio dice il contrario.
 - **B. `servizi-http` fermo**, `server-mcp` riavviato, `--no-deps`: discovery MCP riuscita; «Che corsi ci sono a Udine?» → `cerca_catalogo` → `Errore: servizio non raggiungibile su http://servizi-http:8000`, il modello: «non sono riuscito a trovare i corsi ... a causa di un errore del servizio»; «Elenca le mie note.» → `elenca_note` ok; «Che ora è a Tokyo?» → `orologio`.
-- **Porta 8001 occupata e `server-mcp` non avviabile:** provato in T6 (casi E1 `run` fallisce, E2 `--no-deps` avvio ridotto con `orologio`) **e non ripetuto in T15**; lo stesso discorso vale per `servizi-http` e la porta 8000 (Compose si comporta allo stesso modo: la dipendenza non parte → `run` fallisce, `--no-deps` funziona; non provato esplicitamente).
+- **Porta 8001 occupata e `server-mcp` non avviabile:** provato in T6 (casi E1 `run` fallisce, E2 `--no-deps` avvio ridotto con `orologio`) e non ripetuto in T15.
+- **Porta 8000 occupata da un altro processo dell'host (`servizi-http` non avviabile):** `docker compose run --rm -T assistente` → **exit 1**, «ports are not available: exposing port TCP 127.0.0.1:8000 ... bind: Only one usage of each socket address»; `docker compose run --rm --no-deps -T assistente` → exit 0, avviso «Server MCP non raggiungibile ...» (il server MCP non era avviato), «Che ora è a Tokyo?» → `orologio`, «Che corsi ci sono a Udine?» → `cerca_catalogo` → `Errore: servizio non raggiungibile su http://servizi-http:8000`. Pulizia: listener e container rimossi.
 
 ### Criteri di verifica finale (spec §8), uno per riga
 
@@ -300,12 +303,12 @@ La conferma è sempre arrivata dal terminale, mai dal modello; nessuna cancellaz
 |---|---|---|---|
 | 1 | Tutte le nuove funzionalità disponibili e utilizzabili | **provato con il modello** | tutti e 11 gli strumenti chiamati almeno una volta nella batteria o nella prova di conferma (`elimina_nota` solo dopo la sessione nuova) |
 | 2 | L'orologio continua a funzionare | provato | Tokyo, New York in batteria; Tokyo anche in avvio ridotto A e B |
-| 3 | Selezione corretta con formulazioni diverse | **parziale, limite documentato** | batteria: 18/22 corrette, 4 senza chiamata, 0 scambi; ripetizione in sessioni nuove 12/12; l'utente ha scelto di documentare il limite (nessun intervento sulle descrizioni) |
+| 3 | Selezione corretta con formulazioni diverse | **parziale, limite documentato** | due sessioni lunghe: 18/22 corrette ciascuna, con le stesse 4 domande senza chiamata, 0 scambi; ripetizione in sessioni nuove 12/12; l'utente ha scelto di documentare il limite (nessun intervento sulle descrizioni) |
 | 4 | Discovery e invocazioni MCP reali nei log | provato | `strumenti scoperti su http://server-mcp:8001/mcp: [...]`; `verifica_mcp` exit 0 con i quattro nomi; invocazioni di `aggiungi_nota`, `elenca_note`, `elimina_nota`, `meteo` |
 | 5 | Risultati associati al `tool_call_id` corretto | **solo simulato** | test automatici (`test_instradamento.py::test_due_richieste_nello_stesso_messaggio`, `test_mcp_client.py::test_due_richieste_nello_stesso_messaggio`, `test_due_turni_del_grafo_con_finto_modello`); con il modello i log di testo non mostrano gli identificativi, le risposte sono coerenti con i risultati degli strumenti |
 | 6 | Errori gestiti in modo chiaro | provato (timeout: simulato) | servizio spento (T13, T15-B); input non valido (anno 2025, 400 giorni: T13; codice ITS-999: T14); ID inesistente (nota 99, T15); timeout solo con `httpx.MockTransport`/server finto nei test |
 | 7 | Cronologia, limite passaggi e interruzioni | provato (non ripetuto con 11 strumenti) | cronologia: «Mi chiamo Marco.» → «Come mi chiamo?» → «Ti chiami Marco.» (T15); `MAX_PASSAGGI=2` e Ctrl+C (al prompt e durante la risposta) provati nelle prove iniziali (tabella in testa a questo file, Ctrl+C riferito dall'utente) e coperti da test (`test_limite.py`, `test_terminale.py`) |
-| 8 | Docker Compose come da istruzioni, vera discovery, avvio ridotto | provato | build, tre servizi da zero, `healthy`, `verifica_mcp` exit 0 con i nomi, agente con log; avvio ridotto con `server-mcp` in crash (A) e `servizi-http` fermo (B); server fermo e porta occupata provati in T6, non ripetuti |
+| 8 | Docker Compose come da istruzioni, vera discovery, avvio ridotto | provato | build, tre servizi da zero, `healthy`, `verifica_mcp` exit 0 con i nomi, agente con log; avvio ridotto con `server-mcp` in crash (A) e `servizi-http` fermo (B); porta 8000 occupata provata in T15, server fermo e porta 8001 occupata provati in T6 |
 | 9 | Test e prove documentati, simulato vs provato | questo file | 403 test automatici verdi; sezioni per ramo con la distinzione |
 
 ### Altre osservazioni sul modello (T15)
@@ -313,4 +316,4 @@ La conferma è sempre arrivata dal terminale, mai dal modello; nessuna cancellaz
 - **Cronologia al posto dello strumento:** oltre alle 4 mancanze della batteria, nella prova di conferma il modello ha ripetuto a memoria l'esito di una cancellazione precedente invece di richiamare `elimina_nota`; senza conferma dell'utente non cancella comunque nulla.
 - **Frasi aggiunte non fondate:** in A il commento sulle festività contraddice il risultato dello strumento.
 - **Servizio spento:** il modello riferisce «un errore del servizio» ma non il motivo preciso (già osservato).
-- Non provato: altri modelli; sessioni lunghe ripetute; il timeout reale dei servizi; Ctrl+C con tutti gli strumenti in Docker.
+- Non provato: altri modelli; la causa del salto dello strumento nelle sessioni lunghe; il timeout reale dei servizi; Ctrl+C con tutti gli strumenti in Docker (richiede una sessione interattiva con TTY).
