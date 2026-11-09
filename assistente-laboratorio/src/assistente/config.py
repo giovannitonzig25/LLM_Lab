@@ -8,6 +8,8 @@ MAX_PASSAGGI_PREDEFINITO = 6
 MCP_URL_PREDEFINITO = "http://localhost:8001/mcp"
 MCP_TIMEOUT_PREDEFINITO = 10.0
 MCP_ATTESA_AVVIO_PREDEFINITA = 0.0
+SERVIZI_BASE_URL_PREDEFINITO = "http://localhost:8000"
+SERVIZI_TIMEOUT_PREDEFINITO = 10.0
 
 
 class ErroreConfigurazione(Exception):
@@ -22,6 +24,8 @@ class Config:
     mcp_url: str = MCP_URL_PREDEFINITO
     mcp_timeout: float = MCP_TIMEOUT_PREDEFINITO
     mcp_attesa_avvio: float = MCP_ATTESA_AVVIO_PREDEFINITA
+    servizi_base_url: str = SERVIZI_BASE_URL_PREDEFINITO
+    servizi_timeout: float = SERVIZI_TIMEOUT_PREDEFINITO
 
 
 def _obbligatoria(env: Mapping[str, str], nome: str) -> str:
@@ -64,4 +68,6 @@ def carica_config(env: Mapping[str, str] = os.environ) -> Config:
         mcp_url=env.get("MCP_URL", "").strip() or MCP_URL_PREDEFINITO,
         mcp_timeout=_secondi(env, "MCP_TIMEOUT", MCP_TIMEOUT_PREDEFINITO, minimo_incluso=False),
         mcp_attesa_avvio=_secondi(env, "MCP_ATTESA_AVVIO", MCP_ATTESA_AVVIO_PREDEFINITA, minimo_incluso=True),
+        servizi_base_url=env.get("SERVIZI_BASE_URL", "").strip() or SERVIZI_BASE_URL_PREDEFINITO,
+        servizi_timeout=_secondi(env, "SERVIZI_TIMEOUT", SERVIZI_TIMEOUT_PREDEFINITO, minimo_incluso=False),
     )
