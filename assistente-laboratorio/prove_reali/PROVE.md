@@ -317,3 +317,16 @@ La conferma è sempre arrivata dal terminale, mai dal modello; nessuna cancellaz
 - **Frasi aggiunte non fondate:** in A il commento sulle festività contraddice il risultato dello strumento.
 - **Servizio spento:** il modello riferisce «un errore del servizio» ma non il motivo preciso (già osservato).
 - Non provato: altri modelli; la causa del salto dello strumento nelle sessioni lunghe; il timeout reale dei servizi; Ctrl+C con tutti gli strumenti in Docker (richiede una sessione interattiva con TTY).
+
+## Ramo `fix/input-non-valido` — input con byte non validi in Docker (2026-11-09)
+
+**Come è emerso:** durante la prova interattiva con TTY di Ctrl+C (variante `[s/N]`) l'utente ha scritto «elimina la nota 1» e la sessione si è interrotta con `UnicodeEncodeError: 'utf-8' codec can't encode character '\udcc2' ... surrogates not allowed`, senza premere Ctrl+C. Ciò che l'utente ha digitato esattamente non è noto (ipotesi: carattere speciale incollato, oppure Backspace su un carattere a più byte).
+
+| Prova | Stato | Esito |
+|---|---|---|
+| Prima della correzione: `printf 'elimina la nota \xc2\n' \| docker compose run --rm --no-deps -T assistente` | **provata** | stesso traceback, `\udcc2` nella richiesta al modello (`stdin utf-8 surrogateescape` in Docker) |
+| Prima: input valido con `«»` e accenti | provata | nessun errore: il difetto riguarda solo i byte non validi |
+| Dopo la correzione e `docker compose build`: lo stesso input | **provata** | exit 0, nessun traceback; il modello risponde («fornisci l'ID della nota») |
+| Test automatici (`test_terminale.py`) | simulati | byte isolato `\udcc2`, sequenza troncata `caff\udcc3`, surrogato isolato `\ud800`: la sessione continua e il testo inviato al modello è codificabile e contiene U+FFFD; testo valido con accenti, `«»` ed `€` resta invariato |
+
+Non provato: una sessione interattiva con TTY reale e Backspace su un accento (l'origine esatta del byte nella sessione dell'utente resta un'ipotesi). La correzione sostituisce i byte non validi con U+FFFD in `ripulisci_input`, quindi il modello vede il carattere sostitutivo.
