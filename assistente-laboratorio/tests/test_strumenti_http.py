@@ -108,3 +108,26 @@ def test_base_url_con_barra_finale():
     client = httpx.Client(transport=httpx.MockTransport(risposta_giorni))
     strumenti = {t.name: t for t in crea_strumenti_http(BASE + "/", 3.0, client=client)}
     strumenti["giorni_lavorativi"].invoke({"data_inizio": "2026-11-02", "data_fine": "2026-11-20"})
+
+
+@pytest.mark.parametrize("corpo", [
+    {"giorni_lavorativi": 5},
+    {"da": "2026-11-02", "giorni_lavorativi": 5},
+    {"da": "2026-11-02", "a": "2026-11-20", "giorni_lavorativi": "molti"},
+])
+def test_risposta_con_campi_mancanti_non_solleva(corpo):
+    strumenti, _ = costruisci(lambda r: httpx.Response(200, json=corpo))
+    testo = strumenti["giorni_lavorativi"].invoke({"data_inizio": "2026-11-02", "data_fine": "2026-11-20"})
+    assert testo.startswith("Errore:") and "non valida" in testo
+
+
+def test_scadenza_con_campi_mancanti_non_solleva():
+    strumenti, _ = costruisci(lambda r: httpx.Response(200, json={"data_scadenza": "2026-11-23"}))
+    testo = strumenti["calcola_scadenza"].invoke({"data_inizio": "2026-11-09", "giorni": 10})
+    assert testo.startswith("Errore:") and "non valida" in testo
+
+
+def test_url_malformato_non_solleva():
+    strumenti = {t.name: t for t in crea_strumenti_http("http://host:abc", 3.0)}
+    testo = strumenti["giorni_lavorativi"].invoke({"data_inizio": "2026-11-02", "data_fine": "2026-11-20"})
+    assert testo.startswith("Errore:") and "SERVIZI_BASE_URL" in testo

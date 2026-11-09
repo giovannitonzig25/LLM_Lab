@@ -178,7 +178,7 @@ Totale: 10 domande di calcolo in due sessioni, 9 con chiamata a `calcola` (6 riu
 
 ## Ramo `feat/http-scadenze` — T12–T13: servizio FastAPI e strumenti HTTP (2026-11-09)
 
-Modello `google/gemma-4-e2b`, strumenti registrati: orologio, converti_unita, calcola, `giorni_lavorativi`, `calcola_scadenza` (HTTP, sempre presenti) e, in Docker, i quattro MCP. Esiti riletti dai log (`strumento richiesto/eseguito`, `assistente.http`). Input da pipe, una domanda per riga. Nessuna chiamata doppia osservata.
+Modello `google/gemma-4-e2b`, strumenti registrati: orologio, converti_unita, calcola, `giorni_lavorativi`, `calcola_scadenza` (HTTP, sempre presenti) e, in Docker, i quattro MCP. Esiti riletti dai log (`strumento richiesto/eseguito`, `assistente.http`). Input da pipe, una domanda per riga. Nei log una sola richiesta di strumento per domanda (conteggio riletto: 4 richieste per 4 domande nella prima sessione, 7 per 7 nella seconda).
 
 ### Locale (servizio con `python -m assistente.servizi_http` in un processo separato, MCP spento)
 
@@ -196,7 +196,7 @@ Modello `google/gemma-4-e2b`, strumenti registrati: orologio, converti_unita, ca
 | «Scadenza a 400 giorni lavorativi dal 9 novembre 2026» | provata con il modello | `Errore: Parametro 'giorni' fuori intervallo: sono ammessi da 1 a 365.`; il modello lo riferisce |
 | Servizio spento: «Quanti giorni lavorativi tra il 2 e il 20 novembre 2026?» | provata con il modello | `Errore: servizio non raggiungibile su http://localhost:8000`; il modello risponde con scuse generiche («errore durante l'esecuzione») senza dire il motivo; la chat prosegue («Che ora è?» → `orologio`) |
 
-Totale: 9 domande sulle date, tutte con la chiamata allo strumento HTTP giusto (6 riuscite, 2 con errore atteso del servizio, 1 con servizio spento, quest'ultima in una sessione a parte), più 4 controlli su altri strumenti (`orologio` due volte, `calcola`, `converti_unita`) sempre con lo strumento giusto. Nessuna scelta sbagliata.
+Totale: 8 domande sulle date, tutte con la chiamata allo strumento HTTP giusto (5 riuscite, 2 con errore atteso del servizio, 1 con servizio spento, quest'ultima in una sessione a parte), più 4 controlli su altri strumenti (`orologio` due volte, `calcola`, `converti_unita`) sempre con lo strumento giusto. Nessuna scelta sbagliata.
 
 ### Docker Compose (LM Studio sull'host)
 

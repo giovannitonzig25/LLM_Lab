@@ -23,13 +23,15 @@ def crea_strumenti_http(base_url: str, timeout: float, client: httpx.Client | No
     base = base_url.rstrip("/")
     http = client or httpx.Client()
 
-    def chiama(percorso: str, parametri: dict, campo: str) -> tuple[dict | None, str | None]:
-        """Restituisce (corpo, None) oppure (None, testo d'errore)."""
+    def chiama(percorso: str, parametri: dict, campi: dict[str, type]) -> tuple[dict | None, str | None]:
+        """Restituisce (corpo, None) oppure (None, testo d'errore). `campi`: nome e tipo dei campi attesi."""
         LOG.info("richiesta GET %s %s", percorso, parametri)
         try:
             risposta = http.get(f"{base}{percorso}", params=parametri, timeout=timeout)
         except httpx.TimeoutException:
             return None, f"Errore: timeout dopo {timeout:g} s nella chiamata al servizio"
+        except httpx.InvalidURL:
+            return None, f"Errore: indirizzo del servizio non valido ({base!r}): controlla SERVIZI_BASE_URL"
         except httpx.RequestError:
             return None, f"Errore: servizio non raggiungibile su {base}"
         if risposta.status_code == 422:
@@ -44,14 +46,15 @@ def crea_strumenti_http(base_url: str, timeout: float, client: httpx.Client | No
             corpo = risposta.json()
         except ValueError:
             corpo = None
-        if not isinstance(corpo, dict) or campo not in corpo:
+        if not isinstance(corpo, dict) or not all(isinstance(corpo.get(c), t) for c, t in campi.items()):
             return None, "Errore: risposta del servizio non valida"
         return corpo, None
 
     @tool
     def giorni_lavorativi(data_inizio: str, data_fine: str) -> str:
         """Conta i giorni lavorativi (esclusi sabati, domeniche e festività nazionali italiane 2026-2027) tra due date, estremi inclusi. Date nel formato AAAA-MM-GG. Esempio: "quanti giorni lavorativi tra il 2 e il 20 novembre 2026?" → data_inizio="2026-11-02", data_fine="2026-11-20". Non serve per l'ora attuale."""
-        corpo, errore = chiama("/giorni-lavorativi", {"da": data_inizio, "a": data_fine}, "giorni_lavorativi")
+        corpo, errore = chiama("/giorni-lavorativi", {"da": data_inizio, "a": data_fine},
+                              {"da": str, "a": str, "giorni_lavorativi": int})
         if errore:
             return errore
         return f"Giorni lavorativi dal {corpo['da']} al {corpo['a']}: {corpo['giorni_lavorativi']}. {corpo.get('nota', '')}".strip()
@@ -59,7 +62,8 @@ def crea_strumenti_http(base_url: str, timeout: float, client: httpx.Client | No
     @tool
     def calcola_scadenza(data_inizio: str, giorni: int) -> str:
         """Calcola la data di scadenza dopo un numero di giorni lavorativi (esclusi weekend e festività nazionali italiane 2026-2027); il giorno di partenza non conta. Data nel formato AAAA-MM-GG, giorni da 1 a 365. Esempio: "scadenza a 10 giorni lavorativi dal 9 novembre 2026" → data_inizio="2026-11-09", giorni=10."""
-        corpo, errore = chiama("/scadenza", {"da": data_inizio, "giorni": giorni}, "data_scadenza")
+        corpo, errore = chiama("/scadenza", {"da": data_inizio, "giorni": giorni},
+                              {"da": str, "giorni": int, "data_scadenza": str})
         if errore:
             return errore
         return (
