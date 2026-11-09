@@ -25,7 +25,7 @@ def risposta_giorni(richiesta):
 
 def test_nomi_e_descrizioni():
     strumenti, _ = costruisci(risposta_giorni)
-    assert set(strumenti) == {"giorni_lavorativi", "calcola_scadenza"}
+    assert set(strumenti) == {"giorni_lavorativi", "calcola_scadenza", "cerca_catalogo", "dettaglio_catalogo"}
     assert "ora attuale" in strumenti["giorni_lavorativi"].description
     assert "data_inizio" in strumenti["giorni_lavorativi"].args and "data_fine" in strumenti["giorni_lavorativi"].args
     assert "giorni" in strumenti["calcola_scadenza"].args

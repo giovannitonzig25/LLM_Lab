@@ -5,10 +5,14 @@ from importlib import resources
 
 from fastapi import FastAPI, HTTPException
 
+from .catalogo import carica_catalogo, cerca, trova
 from .scadenze import calcola_scadenza, giorni_lavorativi
 
 ANNO_MIN, ANNO_MAX = 2026, 2027
 GIORNI_MIN, GIORNI_MAX = 1, 365
+Q_MAX_CARATTERI = 100
+RISULTATI_MIN, RISULTATI_MAX, RISULTATI_PREDEFINITI = 1, 10, 5
+NOTA_CATALOGO = "Catalogo di esempio: i corsi sono fittizi."
 NOTA = "Calcolo indicativo: le festività sono quelle nazionali italiane e il risultato non è normativo."
 
 
@@ -36,6 +40,7 @@ def _data(valore: str | None, nome: str) -> date:
 def crea_app() -> FastAPI:
     app = FastAPI(title="Servizi date e scadenze")
     festivita = carica_festivita()
+    corsi = carica_catalogo()
 
     @app.get("/salute")
     def salute() -> dict:
@@ -66,5 +71,32 @@ def crea_app() -> FastAPI:
         if risultato.year > ANNO_MAX:
             raise _errore(f"La scadenza uscirebbe dagli anni coperti (fino al 31/12/{ANNO_MAX}): festività non note.")
         return {"da": inizio.isoformat(), "giorni": n, "data_scadenza": risultato.isoformat(), "nota": NOTA}
+
+    @app.get("/catalogo")
+    def catalogo(q: str | None = None, max_risultati: str | None = None) -> dict:
+        testo = (q or "").strip()
+        if not testo:
+            raise _errore("Parametro 'q' mancante: serve una parola chiave (titolo, settore o sede).")
+        if len(testo) > Q_MAX_CARATTERI:
+            raise _errore(f"Parametro 'q' troppo lungo: al massimo {Q_MAX_CARATTERI} caratteri.")
+        massimo = RISULTATI_PREDEFINITI
+        if max_risultati is not None:
+            try:
+                massimo = int(max_risultati.strip())
+            except ValueError:
+                raise _errore(
+                    f"Parametro 'max_risultati' non valido: serve un intero tra {RISULTATI_MIN} e {RISULTATI_MAX}."
+                ) from None
+        if not RISULTATI_MIN <= massimo <= RISULTATI_MAX:
+            raise _errore(f"Parametro 'max_risultati' fuori intervallo: sono ammessi da {RISULTATI_MIN} a {RISULTATI_MAX}.")
+        totale, risultati = cerca(corsi, testo, massimo)
+        return {"totale": totale, "risultati": risultati, "nota": NOTA_CATALOGO}
+
+    @app.get("/catalogo/{codice}")
+    def dettaglio(codice: str) -> dict:
+        corso = trova(corsi, codice)
+        if corso is None:
+            raise HTTPException(status_code=404, detail=f"Corso {codice} non trovato.")
+        return {**corso, "nota": NOTA_CATALOGO}
 
     return app

@@ -68,7 +68,7 @@ def strumento_mcp_finto(x: str) -> str:
 
 
 NOMI_LOCALI = ["orologio", "converti_unita", "calcola"]
-NOMI_HTTP = ["giorni_lavorativi", "calcola_scadenza"]
+NOMI_HTTP = ["giorni_lavorativi", "calcola_scadenza", "cerca_catalogo", "dettaglio_catalogo"]
 
 
 def nomi(strumenti):
