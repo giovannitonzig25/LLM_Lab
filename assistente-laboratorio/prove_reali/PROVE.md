@@ -120,3 +120,30 @@ Totale: 9 domande sul meteo (7 con rete, 1 città inesistente, 1 senza rete), 3 
 - Con `count=5` il numero di candidati è un minimo («almeno N»): il messaggio è stato corretto dopo averlo visto con l'API vera.
 - `docker compose run` non ha `--network`: per il container senza rete si è usato `docker run --network none` sull'immagine già costruita. Un primo `docker compose build` ha dato un errore transitorio di snapshot di Docker; il secondo è andato a buon fine.
 - Non provato: Ctrl+C durante una chiamata al meteo, risposte molto lente di Open-Meteo (il timeout è coperto solo dai test simulati), altri modelli.
+
+## Ramo `feat/conversione-unita` — T10: `converti_unita` (2026-11-09)
+
+Modello `google/gemma-4-e2b`, con **tutti** gli strumenti registrati (orologio, converti_unita e i quattro MCP, server attivo). Esiti verificati nei log. Input da pipe.
+
+| Domanda | Stato | Strumento e risultato |
+|---|---|---|
+| «Quanti chilometri sono 10 miglia?» | **provata con il modello** | `converti_unita {valore: 10, da: 'mi', a: 'km'}` → `10 mi = 16.0934 km` |
+| «100 gradi Fahrenheit in Celsius» | provata con il modello | `{100, 'F', 'C'}` → `100 F = 37.7778 C` |
+| «Converti 5 libbre in chilogrammi» | provata con il modello | `{5, 'lb', 'kg'}` → `5 lb = 2.268 kg` |
+| «Quanti litri sono 2 galloni?» | provata con il modello (due volte) | `{2, 'gal', 'l'}` → `2 gal = 7.5708 l` |
+| «Quanti centimetri sono 6 piedi?» | provata con il modello | `{6, 'ft', 'cm'}` → `6 ft = 182.88 cm` |
+| «Quanti gradi Celsius sono 300 Kelvin?» | provata con il modello | `{300, 'K', 'C'}` → `300 K = 26.85 C` |
+| «Che ora è a Tokyo?» (controllo) | provata con il modello | `orologio`, non `converti_unita` |
+| «Che tempo fa a Bologna?» (controllo) | provata con il modello | `meteo`, non `converti_unita` |
+| «Usa lo strumento converti_unita per convertire 10 km in kg.» | provata con il modello | `Errore: unità incompatibili: km è lunghezza, kg è massa. Unità ammesse - ...`; il modello lo spiega correttamente |
+| «Quanti gradi Fahrenheit sono -300 Celsius?» | provata con il modello | `Errore: temperatura sotto lo zero assoluto: -300 C`; il modello lo spiega |
+| Docker: «Quanti chilometri sono 10 miglia?», «Che ora è a Tokyo?», «Ricordami di comprare il pane» | provata con il modello | `converti_unita`, `orologio`, `aggiungi_nota`; regressione nulla |
+
+Totale: 10 domande sulla conversione con strumento giusto (8 riuscite, 2 con errore atteso), 2 controlli su altri strumenti, nessuna scelta sbagliata.
+
+### Note
+
+- **Due chiamate identiche:** in una sessione «Quanti litri sono 2 galloni?» ha prodotto **due** richieste di `converti_unita` con gli stessi argomenti (stesso risultato); nella ripetizione una sola. Comportamento del modello, non del programma; innocuo (strumento senza effetti collaterali).
+- **Il modello a volte non chiama lo strumento:** «Quanti chilogrammi sono 10 chilometri?» e «Converti 5 parsec in chilometri» sono state risolte a parole, senza chiamata, con risposte corrette (unità incompatibili / non supportata). I percorsi d'errore reali sono stati esercitati chiedendo esplicitamente lo strumento o con la temperatura sotto lo zero assoluto.
+- Il modello riporta il risultato con la precisione dello strumento (4 decimali).
+- Non provato: unità scritte in forme non previste (es. «chilometri», «celsius», «litro»): lo strumento le rifiuta elencando quelle ammesse; il modello ha sempre usato i simboli corretti nelle prove, ma con altri modelli potrebbe non farlo.
