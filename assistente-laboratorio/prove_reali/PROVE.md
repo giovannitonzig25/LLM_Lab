@@ -85,3 +85,38 @@ Modello: `google/gemma-4-e2b` in LM Studio. Ogni esito è stato verificato nei l
 - Input da pipe: se il modello devia (per esempio risponde a parole invece di richiamare lo strumento), le righe successive si disallineano. Nella prima prova Docker di cancellazione è successo: al secondo «cancella la nota 2» il modello ha chiesto conferma a parole senza chiamare lo strumento, e la mia «s» è stata letta come nuova domanda. Nessuna cancellazione è avvenuta senza `s`. Ho ripetuto la prova in modo lineare (una richiesta, una risposta).
 - Il modello a volte riformula il testo della nota (in Docker ha salvato «ricordami di consegnare il report venerdì», in locale «consegnare il report venerdì»): è un comportamento del modello, non del programma.
 - Non provate: sessione interattiva con TTY (Ctrl+C durante la domanda di conferma), più di tre note lunghe, modelli diversi da `google/gemma-4-e2b`.
+
+## Ramo `feat/mcp-meteo` — T9: prove del meteo (2026-11-09)
+
+Modello `google/gemma-4-e2b` in LM Studio, Open-Meteo **reale** (nessuna simulazione), Docker 29.2.0. Ogni esito verificato nei log (`strumento richiesto/eseguito`). Input da pipe.
+
+### Locale (server MCP in un processo separato)
+
+| Domanda | Stato | Strumento scelto e risultato |
+|---|---|---|
+| «Che tempo fa a Bologna?» | **provata con il modello** | `meteo {'citta': 'Bologna'}` → `10.4 °C, coperto, rilevato il 2026-11-09 11:30`; il modello riferisce temperatura, condizioni e ora |
+| «Piove a Forlì?» | provata con il modello | `meteo {'citta': 'Forlì'}` (accento corretto); la risposta riporta temperatura e «coperto» ma **non dice esplicitamente se piove** |
+| «Com'è il meteo a San Donà di Piave?» | provata con il modello | `meteo {'citta': 'San Donà di Piave'}` (nome con spazi e accento), nessun altro candidato |
+| «Serve l'ombrello oggi a Bologna?» | provata con il modello | `meteo`; il modello nota l'assenza di precipitazioni e suggerisce prudenza |
+| «Dimmi la temperatura a Roma.» | provata con il modello | `meteo {'citta': 'Roma'}` |
+| «Che ora è a Tokyo?», «Che ore sono adesso?» | provata con il modello | `orologio`, **mai** `meteo` (nessuno scambio tra i due) |
+| «Che tempo fa ad Atlantideville123?» | provata con il modello | `Errore: città non trovata: 'Atlantideville123'`; il modello lo dice e chiede se il nome è sbagliato, senza inventare dati |
+| Rete assente (server avviato con `HTTPS_PROXY` su una porta chiusa), «Che tempo fa a Bologna?» | provata con il modello | `Errore: rete non disponibile: impossibile raggiungere il servizio meteo` (distinto da «città non trovata»); il modello parla di problema di connessione; `orologio` funziona ancora |
+
+Totale: 9 domande sul meteo (7 con rete, 1 città inesistente, 1 senza rete), 3 sull'ora; nessuna scelta di strumento sbagliata.
+
+### Docker
+
+| Prova | Stato | Esito |
+|---|---|---|
+| Open-Meteo raggiungibile dal container `server-mcp` | provata | `leggi_meteo('Bologna')` → risultato reale |
+| Container **senza rete** (`docker run --network none`) | provata | `rete non disponibile: impossibile raggiungere il servizio meteo` |
+| Agente in Docker con il modello: «Che tempo fa a Bologna?», «Piove a Forlì?», «Che ora è a Tokyo?» | provata con il modello | `meteo`, `meteo`, `orologio`; discovery con 4 strumenti |
+| Regressione note in Docker: «Ricordami di comprare il pane», «elenca le mie note» | provata con il modello | `aggiungi_nota` (`id 1`), `elenca_note` |
+
+### Note
+
+- Il risultato dichiara le città ambigue («Altri luoghi con lo stesso nome: almeno 4 (ho usato il primo)»), ma il modello **non lo riporta all'utente** nelle sue risposte: l'informazione è nel risultato dello strumento e nei log, non nel testo finale.
+- Con `count=5` il numero di candidati è un minimo («almeno N»): il messaggio è stato corretto dopo averlo visto con l'API vera.
+- `docker compose run` non ha `--network`: per il container senza rete si è usato `docker run --network none` sull'immagine già costruita. Un primo `docker compose build` ha dato un errore transitorio di snapshot di Docker; il secondo è andato a buon fine.
+- Non provato: Ctrl+C durante una chiamata al meteo, risposte molto lente di Open-Meteo (il timeout è coperto solo dai test simulati), altri modelli.

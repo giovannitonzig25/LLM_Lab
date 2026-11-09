@@ -9,6 +9,7 @@ from fastmcp.exceptions import ToolError
 
 from assistente.note import ArchivioNote
 from assistente.server_mcp import crea_server
+from meteo_finto import client_finto
 from server_reale import avvia_server_mcp
 
 ISTANTE = datetime(2026, 11, 9, 10, 0, 0, tzinfo=timezone.utc)
@@ -16,7 +17,7 @@ ISTANTE = datetime(2026, 11, 9, 10, 0, 0, tzinfo=timezone.utc)
 
 def crea(tmp_path):
     percorso = str(tmp_path / "note.db")
-    return percorso, crea_server(ArchivioNote(percorso, adesso=lambda: ISTANTE))
+    return percorso, crea_server(ArchivioNote(percorso, adesso=lambda: ISTANTE), client_http=client_finto())
 
 
 def test_discovery_elenca_aggiungi_nota(tmp_path):
@@ -150,3 +151,45 @@ def test_id_inesistente(tmp_path):
         chiama(server, "elimina_nota", {"id": 99})
 
     assert sqlite3.connect(percorso).execute("SELECT testo FROM note").fetchall() == [("resta",)]
+
+
+def test_discovery_meteo_senza_conferma_e_con_parametro_citta(tmp_path):
+    _, server = crea(tmp_path)
+
+    async def scopri(url):
+        async with Client(url) as client:
+            return await client.list_tools()
+
+    with avvia_server_mcp(server) as url:
+        strumenti = {t.name: t for t in asyncio.run(scopri(url))}
+
+    meteo = strumenti["meteo"]
+    assert meteo.description
+    assert meteo.input_schema["properties"]["citta"]["type"] == "string"
+    assert not (meteo.annotations and meteo.annotations.destructive_hint)
+
+
+def test_meteo_via_mcp_con_trasporto_finto(tmp_path):
+    _, server = crea(tmp_path)
+
+    risultato = chiama(server, "meteo", {"citta": "Roma"}).content[0].text
+
+    assert risultato == "Roma (Lazio, Italia): 18.4 °C, parzialmente nuvoloso, rilevato il 2026-11-09 10:00"
+
+
+def test_meteo_errore_via_mcp(tmp_path):
+    server = crea_server(
+        ArchivioNote(str(tmp_path / "note.db")), client_http=client_finto(geocodifica={})
+    )
+
+    with pytest.raises(ToolError, match="non trovata"):
+        chiama(server, "meteo", {"citta": "Atlantide"})
+
+
+def test_meteo_senza_argomento_o_di_tipo_sbagliato(tmp_path):
+    _, server = crea(tmp_path)
+
+    for argomenti in ({}, {"citta": 5}):
+        with pytest.raises(ToolError) as errore:
+            chiama(server, "meteo", argomenti)
+        assert "Traceback" not in str(errore.value)

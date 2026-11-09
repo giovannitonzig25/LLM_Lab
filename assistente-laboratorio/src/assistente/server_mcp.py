@@ -9,16 +9,22 @@ import os
 import sys
 from pathlib import Path
 
+import httpx
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
+from assistente.meteo import ErroreMeteo, leggi_meteo
 from assistente.note import ArchivioNote, ErroreNote
 
 logger = logging.getLogger("assistente.server_mcp")
 
+METEO_TIMEOUT = 10.0  # secondi, per ciascuna delle due richieste a Open-Meteo
 
-def crea_server(archivio: ArchivioNote) -> FastMCP:
+
+def crea_server(archivio: ArchivioNote, client_http: httpx.Client | None = None) -> FastMCP:
+    """Server MCP con note e meteo. `client_http` serve ai test per simulare Open-Meteo."""
     server = FastMCP("note")
+    client_meteo = client_http or httpx.Client(timeout=METEO_TIMEOUT)
 
     @server.tool(
         description=(
@@ -69,6 +75,20 @@ def crea_server(archivio: ArchivioNote) -> FastMCP:
             raise ToolError(str(errore)) from errore
         logger.info("nota eliminata: id %s", id)
         return f"Nota {id} eliminata"
+
+    @server.tool(
+        description=(
+            "Restituisce il meteo attuale (temperatura in °C e condizioni) di una città, "
+            "dato il suo nome. Non serve per sapere che ora è. "
+            'Esempio: "che tempo fa a Bologna?" oppure "piove a Forlì?"'
+        )
+    )
+    def meteo(citta: str) -> str:
+        try:
+            return leggi_meteo(citta, client_meteo)
+        except ErroreMeteo as errore:
+            logger.warning("meteo non disponibile per %r: %s", citta, errore)
+            raise ToolError(str(errore)) from errore
 
     return server
 

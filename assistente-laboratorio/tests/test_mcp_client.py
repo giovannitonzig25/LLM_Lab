@@ -15,6 +15,7 @@ from assistente.mcp_client import ErroreMcp, StrumentoMcp, scopri_strumenti
 from assistente.note import ArchivioNote
 from assistente.server_mcp import crea_server
 from finti import ModelloSimulato
+from meteo_finto import client_finto
 from server_reale import avvia_server_mcp, porta_chiusa, porta_muta
 
 ISTANTE = datetime(2026, 11, 9, 10, 0, 0, tzinfo=timezone.utc)
@@ -23,7 +24,8 @@ ISTANTE = datetime(2026, 11, 9, 10, 0, 0, tzinfo=timezone.utc)
 @pytest.fixture
 def server(tmp_path):
     percorso = str(tmp_path / "note.db")
-    with avvia_server_mcp(crea_server(ArchivioNote(percorso, adesso=lambda: ISTANTE))) as url:
+    server_note = crea_server(ArchivioNote(percorso, adesso=lambda: ISTANTE), client_http=client_finto())
+    with avvia_server_mcp(server_note) as url:
         yield url, percorso
 
 
@@ -287,7 +289,7 @@ def test_destructive_hint_acquisito_dalla_discovery_e_conservato_nel_tool(server
 
     assert all(isinstance(t, BaseTool) for t in strumenti)
     assert {t.name: t.richiede_conferma for t in strumenti} == {
-        "aggiungi_nota": False, "elenca_note": False, "elimina_nota": True,
+        "aggiungi_nota": False, "elenca_note": False, "elimina_nota": True, "meteo": False,
     }
     per_nome = {t.name: t for t in strumenti}
     assert per_nome["elimina_nota"].metadata["destructiveHint"] is True
@@ -324,7 +326,7 @@ def test_il_hint_viene_dal_server_non_dal_nome():
 def test_strumenti_non_distruttivi_non_chiedono_conferma(server):
     url, _ = server
     conferma = Conferma(esito=False)
-    argomenti = {"aggiungi_nota": {"testo": "ciao"}, "elenca_note": {}}  # T8 aggiunge `meteo`
+    argomenti = {"aggiungi_nota": {"testo": "ciao"}, "elenca_note": {}, "meteo": {"citta": "Roma"}}
 
     non_distruttivi = [t for t in scopri_strumenti(url, chiedi_conferma=conferma) if not t.richiede_conferma]
 
@@ -406,3 +408,14 @@ def test_risultato_vuoto_o_non_testuale_non_e_una_stringa_vuota(nome):
     assert risultato.strip()
     assert "nessun contenuto testuale" in risultato
     assert not risultato.startswith("Errore:")
+
+
+def test_errore_del_meteo_attraverso_il_ponte(tmp_path):
+    server = crea_server(
+        ArchivioNote(str(tmp_path / "note.db")), client_http=client_finto(geocodifica={})
+    )
+    with avvia_server_mcp(server) as url:
+        meteo = next(s for s in scopri_strumenti(url) if s.name == "meteo")
+        risultato = meteo.invoke({"citta": "Atlantide"})
+
+    assert risultato.startswith("Errore:") and "non trovata" in risultato
