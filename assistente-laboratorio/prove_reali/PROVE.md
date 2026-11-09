@@ -211,3 +211,39 @@ Totale: 8 domande sulle date, tutte con la chiamata allo strumento HTTP giusto (
 - **Servizio spento:** il modello non dice all'utente che il servizio non è raggiungibile (scusa generica); già osservato con altri strumenti (handoff, §6).
 - **Anni coperti:** il servizio rifiuta date fuori 2026–2027 e scadenze che uscirebbero dal 2027 (festività non note): scelta di progetto, non un difetto.
 - Non provato: altri modelli; invocazione di strumenti MCP in questo ramo (provata in T7–T9); avvio ridotto con `server-mcp` fermo in questo ramo (provato in T7); `servizi-http` fermo con `run` senza `--no-deps` (Compose lo riavvia come dipendenza).
+
+## Ramo `feat/http-catalogo` — T14: catalogo di corsi fittizi (2026-11-09)
+
+Modello `google/gemma-4-e2b`, 11 strumenti HTTP+locali+MCP nel caso Docker (orologio, converti_unita, calcola, giorni_lavorativi, calcola_scadenza, cerca_catalogo, dettaglio_catalogo e i quattro MCP); in locale 7 strumenti (MCP spento). Esiti riletti dai log (`strumento richiesto/eseguito`). Input da pipe, una domanda per riga.
+
+### Locale (servizio con `python -m assistente.servizi_http` in un processo separato)
+
+| Domanda | Stato | Strumento e risultato |
+|---|---|---|
+| «Che corsi ci sono a Udine?» | **provata con il modello** | `cerca_catalogo {'query': 'Udine'}` → 4 corsi (ITS-001, 003, 005, 010); elenco riportato fedelmente |
+| «Dimmi la durata del corso ITS-003.» | provata con il modello | `dettaglio_catalogo {'codice': 'ITS-003'}` → 1600 ore |
+| «Cerca corsi di meccatronica.» | provata con il modello | `cerca_catalogo 'meccatronica'` → 2 corsi (ITS-004, 005) |
+| «Che corsi di informatica ci sono a Pordenone e quanto dura quello?» | provata con il modello | **due passaggi nei log:** `cerca_catalogo 'informatica Pordenone'` (1 corso) poi `dettaglio_catalogo 'ITS-002'`; risposta: 1800 ore |
+| «Ci sono corsi di astrofisica?» | provata con il modello | `cerca_catalogo 'astrofisica'` → `Nessun corso trovato per 'astrofisica'.`; il modello: «Non sono stati trovati corsi relativi a "astrofisica" nel catalogo», **senza inventare** |
+| «Dammi i dettagli del corso ITS-999.» | provata con il modello | `Errore: corso ITS-999 non trovato`; il modello dice che il corso non esiste |
+| «Quanti giorni lavorativi ci sono tra il 2 e il 20 novembre 2026?» / «Che ora è?» (controlli) | provata con il modello | `giorni_lavorativi` → 15 / `orologio`; mai gli strumenti del catalogo |
+| «Quali corsi di logistica avete?» | provata con il modello | `cerca_catalogo 'logistica'` → ITS-006 |
+| «Parlami del corso ITS-007.» | provata con il modello | `dettaglio_catalogo 'ITS-007'`; dati riportati fedelmente (Agroalimentare, Gorizia, 1600 ore) |
+| «Quanto dura il corso di design e prototipazione 3D?» | provata con il modello | **due passaggi:** `cerca_catalogo 'design e prototipazione 3D'` poi `dettaglio_catalogo 'ITS-010'` → 1700 ore |
+| «Elencami i corsi che ci sono a Trieste.» | provata con il modello | `cerca_catalogo 'Trieste'` → ITS-006, ITS-008 |
+| «Quanto fa 17 per 23 più 5?» (controllo) | provata con il modello | `calcola '17*23+5'` → 396 |
+
+Totale: 10 domande sul catalogo in due sessioni (6 + 4) e 3 controlli su altri strumenti. Richieste al catalogo rilette dai log: 7 nella prima sessione e 5 nella seconda, cioè una per domanda più il secondo passo dei tre casi a due tempi. Tutte allo strumento giusto, nessuna scelta sbagliata tra catalogo, date, orologio e calcola. I due casi d'errore (nessun risultato, codice inesistente) sono stati riferiti correttamente dal modello. Nessun tentativo di inventare corsi.
+
+### Docker Compose
+
+- `docker compose build` ok; `up -d server-mcp servizi-http`: entrambi `healthy`.
+- `docker compose run --rm -T assistente`: discovery MCP `['aggiungi_nota', 'elenca_note', 'elimina_nota', 'meteo']`; «Che corsi ci sono a Udine?» → `cerca_catalogo` (4 corsi); «Dimmi la durata del corso ITS-003.» → `dettaglio_catalogo` (1600 ore); regressione MCP: «Ricordami di preparare la lezione di venerdì» → `aggiungi_nota` (id 1), «Elenca le mie note» → `elenca_note`. Le 4 domande hanno avuto risposta.
+- Pulizia: `docker compose down -v`; nessun container, volume o processo in ascolto su 8000/8001.
+
+### Note
+
+- **Simulato, non provato con il modello:** servizio spento e risposte non valide per gli strumenti del catalogo (solo `httpx.MockTransport`; con il modello il servizio spento era stato provato in T13 per gli strumenti delle date), `max_risultati` oltre il limite, `q` troppo lungo, codice con caratteri speciali (`../salute`, codificato nel percorso), accenti nella ricerca (testato su dati finti).
+- **Dichiarazione «fittizi»:** il servizio la include in ogni risposta e il wrapper la riporta; nelle risposte del modello compare di solito («i corsi sono fittizi»), ma in una risposta (Docker) è stata abbreviata in «Il catalogo è di esempio».
+- **Il modello a volte aggiunge commenti propri** (per esempio «Ti consiglio di verificare i dettagli di questo corso»): innocui, non inventano dati.
+- Non provato: altri modelli, catalogo con molti più corsi, `max_risultati` scelto dal modello.
