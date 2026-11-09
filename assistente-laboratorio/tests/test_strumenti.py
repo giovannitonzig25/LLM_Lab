@@ -43,7 +43,8 @@ def test_fuso_non_valido_da_errore_chiaro(valore):
 def test_orologio_ha_schema_con_timezone():
     assert "timezone" in orologio.args
     assert orologio.name == "orologio"
-    assert STRUMENTI == [orologio]
+    assert orologio in STRUMENTI
+    assert [s.name for s in STRUMENTI] == ["orologio", "converti_unita"]
 
 
 def test_orologio_accetta_timezone_nullo():
@@ -88,7 +89,7 @@ def test_compone_locali_piu_mcp():
         config_con(), scopri=lambda url, timeout, chiedi_conferma=None: [strumento_mcp_finto]
     )
 
-    assert strumenti == [orologio, strumento_mcp_finto]
+    assert strumenti == [*STRUMENTI, strumento_mcp_finto]
     assert avvisi == []
 
 
@@ -98,7 +99,7 @@ def test_avvio_ridotto_con_avviso():
 
     strumenti, avvisi = componi_strumenti(config_con(MCP_URL="http://x:1/mcp"), scopri=scopri)
 
-    assert strumenti == [orologio]
+    assert strumenti == STRUMENTI
     assert len(avvisi) == 1
     assert "http://x:1/mcp" in avvisi[0]
     assert "Riavvia l'agente quando il server è attivo" in avvisi[0]
@@ -120,7 +121,7 @@ def test_attesa_all_avvio_server_in_ritardo():
         dormi=orologio_finto.dormi, adesso=orologio_finto.adesso,
     )
 
-    assert strumenti == [orologio, strumento_mcp_finto]
+    assert strumenti == [*STRUMENTI, strumento_mcp_finto]
     assert avvisi == []
     assert tentativi == [0.0, 1.0, 2.0]
 
@@ -138,7 +139,7 @@ def test_attesa_scaduta():
         dormi=orologio_finto.dormi, adesso=orologio_finto.adesso,
     )
 
-    assert strumenti == [orologio]
+    assert strumenti == STRUMENTI
     assert len(avvisi) == 1
     assert orologio_finto.t == 3.0
     assert len(tentativi) == 4
