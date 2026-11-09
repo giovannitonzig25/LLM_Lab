@@ -307,7 +307,7 @@ La conferma è sempre arrivata dal terminale, mai dal modello; nessuna cancellaz
 | 4 | Discovery e invocazioni MCP reali nei log | provato | `strumenti scoperti su http://server-mcp:8001/mcp: [...]`; `verifica_mcp` exit 0 con i quattro nomi; invocazioni di `aggiungi_nota`, `elenca_note`, `elimina_nota`, `meteo` |
 | 5 | Risultati associati al `tool_call_id` corretto | **solo simulato** | test automatici (`test_instradamento.py::test_due_richieste_nello_stesso_messaggio`, `test_mcp_client.py::test_due_richieste_nello_stesso_messaggio`, `test_due_turni_del_grafo_con_finto_modello`); con il modello i log di testo non mostrano gli identificativi, le risposte sono coerenti con i risultati degli strumenti |
 | 6 | Errori gestiti in modo chiaro | provato (timeout: simulato) | servizio spento (T13, T15-B); input non valido (anno 2025, 400 giorni: T13; codice ITS-999: T14); ID inesistente (nota 99, T15); timeout solo con `httpx.MockTransport`/server finto nei test |
-| 7 | Cronologia, limite passaggi e interruzioni | provato (non ripetuto con 11 strumenti) | cronologia: «Mi chiamo Marco.» → «Come mi chiamo?» → «Ti chiami Marco.» (T15); `MAX_PASSAGGI=2` e Ctrl+C (al prompt e durante la risposta) provati nelle prove iniziali (tabella in testa a questo file, Ctrl+C riferito dall'utente) e coperti da test (`test_limite.py`, `test_terminale.py`) |
+| 7 | Cronologia, limite passaggi e interruzioni | provato (Ctrl+C con 11 strumenti: riferito dall'utente) | cronologia: «Mi chiamo Marco.» → «Come mi chiamo?» → «Ti chiami Marco.» (T15); `MAX_PASSAGGI=2` e Ctrl+C (al prompt e durante la risposta) provati nelle prove iniziali (tabella in testa a questo file, Ctrl+C riferito dall'utente) e coperti da test (`test_limite.py`, `test_terminale.py`) |
 | 8 | Docker Compose come da istruzioni, vera discovery, avvio ridotto | provato | build, tre servizi da zero, `healthy`, `verifica_mcp` exit 0 con i nomi, agente con log; avvio ridotto con `server-mcp` in crash (A) e `servizi-http` fermo (B); porta 8000 occupata provata in T15, server fermo e porta 8001 occupata provati in T6 |
 | 9 | Test e prove documentati, simulato vs provato | questo file | 403 test automatici verdi; sezioni per ramo con la distinzione |
 
@@ -316,7 +316,7 @@ La conferma è sempre arrivata dal terminale, mai dal modello; nessuna cancellaz
 - **Cronologia al posto dello strumento:** oltre alle 4 mancanze della batteria, nella prova di conferma il modello ha ripetuto a memoria l'esito di una cancellazione precedente invece di richiamare `elimina_nota`; senza conferma dell'utente non cancella comunque nulla.
 - **Frasi aggiunte non fondate:** in A il commento sulle festività contraddice il risultato dello strumento.
 - **Servizio spento:** il modello riferisce «un errore del servizio» ma non il motivo preciso (già osservato).
-- Non provato: altri modelli; la causa del salto dello strumento nelle sessioni lunghe; il timeout reale dei servizi; Ctrl+C con tutti gli strumenti in Docker (richiede una sessione interattiva con TTY).
+- Non provato: altri modelli; la causa del salto dello strumento nelle sessioni lunghe; il timeout reale dei servizi; Ctrl+C con tutti gli strumenti in Docker (provato dopo, vedi la sezione «Ctrl+C in Docker con 11 strumenti»).
 
 ## Ramo `fix/input-non-valido` — input con byte non validi in Docker (2026-11-09)
 
@@ -330,3 +330,9 @@ La conferma è sempre arrivata dal terminale, mai dal modello; nessuna cancellaz
 | Test automatici (`test_terminale.py`) | simulati | byte isolato `\udcc2`, sequenza troncata `caff\udcc3`, surrogato isolato `\ud800`: la sessione continua e il testo inviato al modello è codificabile (contiene U+FFFD per i primi due casi, `?` per il surrogato isolato fuori intervallo, che stdin non produce); testo valido con accenti, `«»` ed `€` resta invariato |
 
 Non provato: una sessione interattiva con TTY reale con incolla di caratteri speciali (l'origine esatta del byte nella sessione dell'utente resta un'ipotesi). La correzione sostituisce i byte non validi con U+FFFD in `ripulisci_input`, quindi il modello vede il carattere sostitutivo.
+
+## Ctrl+C in Docker con 11 strumenti, su `dev` dopo il merge di `fix/input-non-valido` (2026-11-09)
+
+Prova **interattiva con TTY** (`docker compose run --rm assistente`, immagine ricostruita, `server-mcp` e `servizi-http` attivi), eseguita **dall'utente**: Ctrl+C al prompt `Tu:`, Ctrl+C durante la risposta del modello e la variante facoltativa alla domanda `[s/N]` di `elimina_nota`, secondo la guida data. Esito riferito dall'utente: **«sono passate tutte»**. L'esito è quello riferito dall'utente, **non riletto da log** da me; non ho chiesto il dettaglio per singola prova né se sia rimasto qualche container `...assistente-run-...`.
+
+Il primo tentativo dell'utente (prima del ramo `fix/input-non-valido`) era invece caduto per un byte non valido nell'input, non per Ctrl+C: vedi la sezione di quel ramo.
