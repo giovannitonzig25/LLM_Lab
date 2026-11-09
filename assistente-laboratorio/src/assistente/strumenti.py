@@ -9,6 +9,7 @@ from langchain_core.tools import BaseTool, tool
 
 from assistente.config import Config
 from assistente.mcp_client import ErroreMcp, scopri_strumenti
+from assistente.unita import converti_unita
 
 LOG = logging.getLogger("assistente.strumenti")
 
@@ -44,7 +45,7 @@ def orologio(timezone: str | None = FUSO_PREDEFINITO) -> str:
     return leggi_orologio(timezone)
 
 
-STRUMENTI = [orologio]
+STRUMENTI = [orologio, converti_unita]
 
 
 AVVISO_MCP = (
