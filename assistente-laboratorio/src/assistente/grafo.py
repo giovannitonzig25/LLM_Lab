@@ -3,14 +3,14 @@ import logging
 from collections.abc import Sequence
 from typing import Annotated, NotRequired, TypedDict
 
-from langchain_core.messages import AIMessage, AnyMessage, ToolMessage
+from langchain_core.messages import AIMessage, AnyMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
 from assistente.revisore import contesto_agente, crea_nodo_revisore
-from assistente.riassunto import crea_nodo_riassunto
-from assistente.router import crea_nodo_router, testo_rifiuto
+from assistente.riassunto import CORNICE_AGENTE, crea_nodo_riassunto
+from assistente.router import crea_nodo_router, riassunto_presente, testo_rifiuto
 
 LOG = logging.getLogger("assistente.strumenti")
 LOG_ROUTER = logging.getLogger("assistente.router")
@@ -61,7 +61,12 @@ def costruisci_grafo(
     def nodo_modello(stato: Stato) -> dict:
         LOG_ROUTER.info("agente: chiamata al modello")
         # Cronologia completa nello stato; all'agente niente bozze e osservazioni dei turni precedenti (spec §9.3).
-        return {"messages": [modello.invoke(contesto_agente(stato["messages"], stato["inizio_turno"]))]}
+        richiesta = contesto_agente(stato["messages"], stato["inizio_turno"])
+        riassunto = stato.get("riassunto", "")
+        if riassunto_presente(riassunto):
+            # Messaggio temporaneo: solo nella richiesta, mai nello stato né nel conteggio (spec Step 3 §9.1).
+            richiesta = [SystemMessage(CORNICE_AGENTE.format(riassunto=riassunto)), *richiesta]
+        return {"messages": [modello.invoke(richiesta)]}
 
     def nodo_rifiuto(stato: Stato) -> dict:
         LOG_ROUTER.info("rifiuto: risposta fissa, agente non eseguito")
