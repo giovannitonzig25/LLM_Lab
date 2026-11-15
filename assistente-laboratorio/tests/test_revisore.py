@@ -582,3 +582,150 @@ def test_turno_precedente_al_limite_resta_intero():
 
     assert testo == "ULTIMA"
     assert [m.text for m in modello.chiamate[-1]] == ["d1", "ULTIMA", "d2"]
+
+
+# --- Errori del Revisore, fail-open e log (Task 7) ---
+
+import re
+
+import openai
+
+from assistente.terminale import ERRORE_SERVER
+
+
+def revisore_http(monkeypatch, contenuto, finish_reason="stop"):
+    """Revisore vero (crea_revisore) con risposta HTTP simulata."""
+    richieste_http(monkeypatch, contenuto, finish_reason)
+    return modulo_modello.crea_revisore(_config())
+
+
+def controlla_fail_open(caplog, stato, modello, chiamate_agente=1):
+    assert stato["esito_revisione"] == "senza_revisione"
+    assert len(modello.chiamate) == chiamate_agente
+    assert not any("coerente=true" in r for r in righe(caplog))
+
+
+@pytest.mark.parametrize(
+    ("contenuto", "finish_reason", "atteso"),
+    [
+        ('{"motivo": "segreto-grezzo"}', "stop", "ValidationError: campi coerente"),
+        ('{"coerente": false, "motivo": "", "nota": "segreto-grezzo"}', "stop", "ValidationError: campi motivo"),
+        ("segreto-grezzo non JSON", "stop", "ValidationError"),
+        ("", "stop", "ValueError"),
+        ('{"coerente": fals segreto-grezzo', "length", "LengthFinishReasonError"),
+    ],
+)
+def test_client_reale_output_non_valido(monkeypatch, caplog, contenuto, finish_reason, atteso):
+    modello = ModelloSimulato([AIMessage("Risposta.")])
+    grafo = grafo_revisore(modello, revisore_http(monkeypatch, contenuto, finish_reason))
+
+    with caplog.at_level(logging.INFO):
+        stato = grafo.invoke({"messages": [HumanMessage("Che ore sono?")]})
+
+    assert stato["messages"][-1].text == "Risposta."
+    controlla_fail_open(caplog, stato, modello)
+    [riga] = righe(caplog)
+    assert riga.startswith(f"revisore: giudizio non valido ({atteso}")
+    assert "risposta restituita senza revisione durata=" in riga
+    assert avvisi(caplog) == [riga]
+    assert not any("segreto-grezzo" in r.getMessage() for r in caplog.records)
+
+
+def test_length_finish_reason_e_giudizio_non_valido(monkeypatch, caplog):
+    # P1: LengthFinishReasonError è una sottoclasse di OpenAIError, ma è un output non valido.
+    assert issubclass(openai.LengthFinishReasonError, openai.OpenAIError)
+    grafo = grafo_revisore(ModelloSimulato([AIMessage("Ok")]), revisore_http(monkeypatch, '{"coerente": tr', "length"))
+
+    with caplog.at_level(logging.INFO):
+        grafo.invoke({"messages": [HumanMessage("Che ore sono?")]})
+
+    [riga] = righe(caplog)
+    assert riga.startswith("revisore: giudizio non valido (LengthFinishReasonError)")
+    assert "non disponibile" not in riga
+
+
+def errore_di_connessione(tipo):
+    return tipo(request=httpx.Request("POST", "http://localhost:1234/v1/chat/completions"))
+
+
+@pytest.mark.parametrize("tipo", [openai.APIConnectionError, openai.APITimeoutError])
+@pytest.mark.parametrize("al_secondo_giudizio", [False, True])
+def test_server_non_disponibile(caplog, tipo, al_secondo_giudizio):
+    if al_secondo_giudizio:
+        modello = ModelloSimulato([AIMessage("parziale"), AIMessage("seconda")])
+        revisore = ClassificatoreSimulato([valutazione(False, "manca"), errore_di_connessione(tipo)])
+        attesa, chiamate = "seconda", 2
+    else:
+        modello = ModelloSimulato([AIMessage("prima")])
+        revisore = ClassificatoreSimulato([errore_di_connessione(tipo)])
+        attesa, chiamate = "prima", 1
+    precedente = [HumanMessage("Ciao"), AIMessage("Salve")]
+
+    with caplog.at_level(logging.INFO):
+        cronologia, testo = turno(modello, revisore, cronologia=precedente)
+
+    assert testo == attesa
+    assert cronologia[:2] == precedente and cronologia[-1].text == attesa
+    assert len(modello.chiamate) == chiamate
+    ultima = righe(caplog)[-1]
+    assert re.fullmatch(
+        rf"revisore: non disponibile \({tipo.__name__}\), risposta restituita senza revisione durata=\d+\.\ds", ultima
+    )
+    assert not any("coerente=true" in r for r in righe(caplog))
+
+
+def test_eccezione_imprevista_si_propaga():
+    revisore = ClassificatoreSimulato([RuntimeError("bug")])
+
+    with pytest.raises(RuntimeError, match="bug"):
+        turno(ModelloSimulato([AIMessage("Ok")]), revisore)
+
+
+def test_errore_nella_composizione_del_prompt_si_propaga(monkeypatch, caplog):
+    # P4: solo `invoke` del Revisore è protetto; un errore prima della chiamata non diventa un fail-open.
+    def validation_error(*_):
+        Valutazione.model_validate({})
+
+    revisore = approva_sempre()
+    monkeypatch.setattr(modulo_revisore, "componi_prompt", validation_error)
+    with pytest.raises(pydantic.ValidationError):
+        turno(ModelloSimulato([AIMessage("Ok")]), revisore)
+
+    def errore_openai(*_):
+        raise errore_di_connessione(openai.APIConnectionError)
+
+    monkeypatch.setattr(modulo_revisore, "componi_prompt", errore_openai)
+    with pytest.raises(openai.APIConnectionError):
+        grafo_revisore(ModelloSimulato([AIMessage("Ok")]), revisore).invoke({"messages": [HumanMessage("d")]})
+
+    # Attraverso esegui_turno l'errore del server scarta il turno (gestione invariata), senza fail-open.
+    precedente = [HumanMessage("Ciao"), AIMessage("Salve")]
+    with caplog.at_level(logging.INFO):
+        cronologia, testo = turno(ModelloSimulato([AIMessage("Ok")]), revisore, cronologia=precedente)
+    assert testo.startswith(ERRORE_SERVER.split("(")[0])
+    assert cronologia == precedente
+    assert not any("non disponibile" in r for r in righe(caplog))
+    assert revisore.chiamate == []
+
+
+def test_log_del_revisore_senza_dati_superflui(monkeypatch, caplog):
+    domanda = "Mi chiamo Mario Rossi, che ore sono?"
+    precedente = [HumanMessage("Domanda precedente"), AIMessage("Risposta precedente")]
+    motivo_lungo = "MOTIVO-VISIBILE " + "x" * 150 + "\nseconda riga " + "y" * 150
+    risposte = [AIMessage("RISPOSTA-SEGRETA 1"), AIMessage("RISPOSTA-SEGRETA 2")]
+
+    with caplog.at_level(logging.INFO):
+        turno(ModelloSimulato(risposte[:1]), approva_sempre(), domanda=domanda, cronologia=precedente)
+        turno(ModelloSimulato(risposte), rifiuta_sempre(motivo_lungo), domanda=domanda, cronologia=precedente)
+        turno(ModelloSimulato(risposte[:1]), revisore_http(monkeypatch, "segreto-grezzo"), domanda=domanda,
+              cronologia=precedente)
+
+    log = righe(caplog)
+    assert len(log) == 1 + 3 + 1  # approvata; correzione, limite, avviso di limite; fail-open
+    for riga in log:
+        for vietato in ("Mario Rossi", "RISPOSTA-SEGRETA", "TURNI PRECEDENTI", "segreto-grezzo", "Risposta precedente"):
+            assert vietato not in riga
+        assert "\n" not in riga
+    motivi = [re.search(r"motivo=(.*) durata=", riga).group(1) for riga in log if "motivo=" in riga]
+    assert any(m.startswith("MOTIVO-VISIBILE") for m in motivi)
+    assert all(len(m) <= 120 for m in motivi)

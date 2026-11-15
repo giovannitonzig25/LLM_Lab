@@ -3,10 +3,11 @@ import logging
 import time
 from collections.abc import Callable, Sequence
 
+import openai
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
-from assistente.router import CHIAVE_REVISIONE, e_osservazione, motivo_per_log, testo_contesto
+from assistente.router import CHIAVE_REVISIONE, diagnosi, e_osservazione, motivo_per_log, testo_contesto
 
 LOG = logging.getLogger("assistente.revisore")
 MAX_MOTIVO_OSSERVAZIONE = 300
@@ -106,11 +107,31 @@ def crea_nodo_revisore(revisore, max_revisioni: int) -> Callable[[dict], dict]:
     """Nodo che giudica l'ultima risposta; rimanda all'agente con un'osservazione finché il limite lo permette."""
 
     def nodo_revisore(stato: dict) -> dict:
+        # La composizione resta fuori dal try: un suo errore è imprevisto e si propaga (spec §10).
         richiesta = [HumanMessage(componi_prompt(stato["messages"], stato["inizio_turno"]))]
         inizio = time.perf_counter()
-        esito = revisore.invoke(richiesta)
+        try:
+            esito = revisore.invoke(richiesta)
+        # Output non valido: l'SDK valida schema e finish_reason dentro la chiamata. LengthFinishReasonError è
+        # una sottoclasse di OpenAIError, quindi va intercettata prima dell'errore del server.
+        except (ValidationError, openai.LengthFinishReasonError) as errore:
+            esito = {"parsed": None, "parsing_error": errore}
+        except openai.OpenAIError as errore:
+            durata = time.perf_counter() - inizio
+            LOG.warning(
+                "revisore: non disponibile (%s), risposta restituita senza revisione durata=%.1fs",
+                type(errore).__name__, durata,
+            )
+            return {"esito_revisione": "senza_revisione"}
         durata = time.perf_counter() - inizio
         valutazione = esito["parsed"]
+        if valutazione is None or esito.get("parsing_error") is not None:
+            # Fail-open: mai registrato come approvazione; solo tipo e campi, mai l'output grezzo.
+            LOG.warning(
+                "revisore: giudizio non valido (%s), risposta restituita senza revisione durata=%.1fs",
+                diagnosi(esito.get("parsing_error")), durata,
+            )
+            return {"esito_revisione": "senza_revisione"}
         motivo = motivo_per_log(valutazione.motivo)
         if valutazione.coerente:
             LOG.info("revisore: coerente=true motivo=%s durata=%.1fs → fine", motivo, durata)
