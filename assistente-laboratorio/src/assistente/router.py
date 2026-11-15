@@ -99,9 +99,10 @@ def crea_nodo_router(classificatore, ambito: str) -> Callable[[dict], dict]:
     """Nodo che classifica la domanda attuale; scrive categoria e motivo nello stato, mai nei messaggi."""
 
     def nodo_router(stato: dict) -> dict:
+        richiesta = [HumanMessage(componi_prompt(stato["messages"], ambito))]
         inizio = time.perf_counter()
         try:
-            esito = classificatore.invoke([HumanMessage(componi_prompt(stato["messages"], ambito))])
+            esito = classificatore.invoke(richiesta)
         # L'SDK openai valida lo schema e il finish_reason dentro la chiamata: output non valido, non errore del server (spec §8).
         except (ValidationError, openai.LengthFinishReasonError) as errore:
             esito = {"parsed": None, "parsing_error": errore}
