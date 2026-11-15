@@ -484,7 +484,7 @@ La stessa domanda «Che ore sono a Tokyo e che tempo fa a Roma?» con risposta *
 
 In Docker la stessa domanda è stata approvata, con l'orario scritto per esteso invece che in formato `2026-11-16 00:02:48`. Il legame con il formato è un'**ipotesi non verificata**.
 
-È il rischio annotato nella specifica (§14: esempio B sugli orari, possibile adattamento eccessivo dello spike). Con il limite predefinito costa una correzione: la risposta corretta arriva comunque, ma il turno si allunga (177–204 s) e l'agente riesegue gli strumenti. Le istruzioni **non** sono state modificate: la specifica chiede di ripetere lo spike per qualunque cambiamento (§5.2).
+È il rischio annotato nella specifica (§14: esempio B sugli orari, possibile adattamento eccessivo dello spike). Con il limite predefinito costa una correzione: la risposta corretta arriva comunque, ma il turno si allunga (177–204 s) e l'agente riesegue gli strumenti. Le istruzioni **non** sono state modificate: la specifica chiede di ripetere lo spike per qualunque cambiamento (§5.2). **Decisione dell'utente (2026-11-15):** limitazione accettata per lo Step 2; un eventuale miglioramento andrà affrontato separatamente, con nuovi esperimenti e test.
 
 ### Errore HTTP 400 alla domanda 9 della sessione 1 (non riprodotto)
 
