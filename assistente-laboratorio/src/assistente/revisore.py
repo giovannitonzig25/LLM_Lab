@@ -82,7 +82,7 @@ def crea_osservazione(motivo: str) -> HumanMessage:
     return HumanMessage(testo_osservazione(motivo), additional_kwargs={CHIAVE_REVISIONE: True})
 
 
-def _bozza_scartata(messaggi: Sequence[BaseMessage], indice: int) -> bool:
+def e_bozza_scartata(messaggi: Sequence[BaseMessage], indice: int) -> bool:
     messaggio = messaggi[indice]
     return (
         isinstance(messaggio, AIMessage)
@@ -98,7 +98,7 @@ def contesto_agente(messaggi: Sequence[BaseMessage], inizio_turno: int) -> list[
     filtrati = [
         messaggio
         for indice, messaggio in enumerate(precedenti)
-        if not e_osservazione(messaggio) and not _bozza_scartata(precedenti, indice)
+        if not e_osservazione(messaggio) and not e_bozza_scartata(precedenti, indice)
     ]
     return [*filtrati, *messaggi[inizio_turno:]]
 
