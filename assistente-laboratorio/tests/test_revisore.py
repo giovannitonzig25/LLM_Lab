@@ -518,19 +518,27 @@ def test_max_passaggi_1():
 
 
 @pytest.mark.parametrize(
-    ("con_strumento", "max_passaggi", "max_revisioni", "completato"),
+    ("scenario", "max_passaggi", "max_revisioni", "completato"),
     [
-        (False, 1, 0, False), (False, 1, 1, True),
-        (True, 1, 0, False), (True, 1, 1, False), (True, 2, 0, False),
-        (True, 3, 0, False), (True, 2, 1, True), (True, 3, 1, True),
+        ("senza_strumenti", 1, 0, False), ("senza_strumenti", 1, 1, True),
+        ("senza_strumenti", 2, 0, True), ("senza_strumenti", 2, 1, True),
+        ("senza_strumenti", 3, 0, True), ("senza_strumenti", 3, 1, True),
+        ("un_giro", 1, 0, False), ("un_giro", 1, 1, False), ("un_giro", 2, 0, False),
+        ("un_giro", 3, 0, False), ("un_giro", 4, 0, True), ("un_giro", 2, 1, True), ("un_giro", 3, 1, True),
+        ("correzione", 1, 1, False), ("correzione", 2, 1, True), ("correzione", 3, 1, True),
     ],
 )
-def test_caratterizza_valori_piccoli(con_strumento, max_passaggi, max_revisioni, completato):
-    # Valori per il README. Il limite è globale (spec §8): con MAX_REVISIONI=1 il margine del secondo
-    # tentativo, anche se non usato, permette un giro di strumento già con MAX_PASSAGGI=2.
-    risposte = ([CHIEDE_ORA] if con_strumento else []) + [AIMessage("Ok")]
+def test_caratterizza_valori_piccoli(scenario, max_passaggi, max_revisioni, completato):
+    # Valori per la tabella del README. Il limite è globale (spec §8): con MAX_REVISIONI=1 il margine del
+    # secondo tentativo, anche se non usato, permette un giro di strumento già con MAX_PASSAGGI=2.
+    if scenario == "correzione":  # una correzione senza strumenti
+        risposte = [AIMessage("parziale"), AIMessage("Ok")]
+        revisore = ClassificatoreSimulato([valutazione(False, "manca"), valutazione(True, "ok")])
+    else:
+        risposte = ([CHIEDE_ORA] if scenario == "un_giro" else []) + [AIMessage("Ok")]
+        revisore = approva_sempre()
 
-    _, testo = turno(ModelloSimulato(risposte), approva_sempre(), max_passaggi=max_passaggi, max_revisioni=max_revisioni)
+    _, testo = turno(ModelloSimulato(risposte), revisore, max_passaggi=max_passaggi, max_revisioni=max_revisioni)
 
     assert (testo == "Ok") is completato
 

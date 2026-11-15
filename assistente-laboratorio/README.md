@@ -36,7 +36,8 @@ Lo script elenca gli identificativi restituiti da `GET /v1/models` ed esce con e
 | `LM_STUDIO_BASE_URL` | indirizzo del server, per esempio `http://localhost:1234/v1` (obbligatoria) |
 | `LM_STUDIO_MODEL` | identificativo del modello (obbligatoria) |
 | `AMBITO_AGENTE` | ambito dell'agente in una riga, al massimo 500 caratteri (obbligatoria): lo usa il Router per classificare le domande e compare nel messaggio di rifiuto. Chi aggiorna da una versione precedente deve aggiungere la riga al proprio `.env` (il valore di esempio è in `.env.example`), altrimenti il programma non parte |
-| `MAX_PASSAGGI` | limite di passaggi del grafo, predefinito 6 |
+| `MAX_PASSAGGI` | budget di passaggi di ogni tentativo dell'agente, predefinito 6 (vedi «Limite di passaggi») |
+| `MAX_REVISIONI` | correzioni che il Revisore può chiedere all'agente per ogni domanda, intero ≥ 0, predefinito 1. Con 0 il Revisore giudica comunque ogni risposta (e aggiunge la sua latenza), ma non chiede mai correzioni |
 | `MCP_URL` | indirizzo del server MCP delle note, predefinito `http://localhost:8001/mcp` |
 | `MCP_TIMEOUT` | secondi massimi per discovery e invocazione MCP (> 0), predefinito 10 |
 | `MCP_ATTESA_AVVIO` | secondi di attesa all'avvio perché il server MCP risponda (≥ 0), predefinito 0 in locale e 20 in Compose |
@@ -93,7 +94,7 @@ La cronologia vale per la sessione: dentro la stessa esecuzione il modello ricor
 
 ## Avvio con Docker Compose
 
-LM Studio resta sull'host; nel container l'indirizzo è `http://host.docker.internal:1234/v1` (Compose lo imposta al posto di quello di `.env`; per un'altra porta o indirizzo definisci `LM_STUDIO_DOCKER_URL` in `.env`). `LM_STUDIO_MODEL` e `MAX_PASSAGGI` vengono da `.env`.
+LM Studio resta sull'host; nel container l'indirizzo è `http://host.docker.internal:1234/v1` (Compose lo imposta al posto di quello di `.env`; per un'altra porta o indirizzo definisci `LM_STUDIO_DOCKER_URL` in `.env`). `LM_STUDIO_MODEL`, `MAX_PASSAGGI` e `MAX_REVISIONI` vengono da `.env`.
 
 ```powershell
 docker compose build
@@ -162,7 +163,7 @@ Un fuso non valido o uno strumento inesistente non fanno cadere il programma: il
 Prima dell'agente un nodo **Router** chiede al modello di classificare la domanda:
 
 ```
-START → router ─┬─ conversazione → modello ⇄ strumenti → END
+START → router ─┬─ conversazione → modello ⇄ strumenti → revisore → … (vedi «Revisore della risposta»)
                 └─ fuori_ambito  → rifiuto → END
 ```
 
@@ -178,7 +179,7 @@ START → router ─┬─ conversazione → modello ⇄ strumenti → END
 - **Errori:**
   - output non valido (JSON errato, categoria sconosciuta, motivo vuoto, risposta vuota o troncata): la domanda passa all'agente (*fail-open*) con un `WARNING`;
   - server non raggiungibile o timeout: stesso messaggio di errore di sempre, cronologia invariata.
-- **`MAX_PASSAGGI`** resta il margine dell'agente: il passaggio del Router è aggiunto a parte (`recursion_limit = MAX_PASSAGGI + 1`).
+- **`MAX_PASSAGGI`** resta il margine dell'agente: il passaggio del Router è aggiunto a parte (formula completa in «Limite di passaggi»).
 
 **Il Router è un filtro di pertinenza, non un meccanismo di sicurezza.** Nessuna protezione dipende da lui: la cancellazione delle note resta protetta dalla conferma nel terminale.
 
@@ -194,19 +195,74 @@ WARNING assistente.router: router: classificazione non valida (ValidationError: 
 
 Gli esempi mostrano il formato, non esiti misurati. L'assenza di `agente: chiamata al modello` in un turno rifiutato dimostra che l'agente non è stato eseguito. Nei log il motivo è troncato a 120 caratteri e non compaiono mai la domanda, il contesto né l'output grezzo del modello.
 
+## Revisore della risposta
+
+Dopo ogni risposta finale dell'agente un nodo **Revisore** chiede al modello se la risposta è coerente con la domanda:
+
+```
+START → router ─┬─ conversazione → modello ─┬─ richiesta di strumenti → strumenti → modello
+                │                           ├─ risposta vuota → END
+                │                           └─ risposta → revisore ─┬─ coerente / limite / errore → END
+                │                                                   └─ da correggere → modello (con un'osservazione)
+                └─ fuori_ambito → rifiuto → END
+```
+
+- **Criterio:** la risposta deve affrontare tutte le parti esplicite della domanda e restare pertinente. Il Revisore **non** verifica l'esattezza dei dati (orari, date, meteo, risultati dei servizi), né stile o lunghezza. Sono coerenti anche una richiesta di chiarimento quando manca un'informazione indispensabile e la segnalazione concreta che un servizio non è disponibile. Nei casi dubbi approva.
+- **Che cosa vede:** la domanda originale del turno, l'ultima risposta proposta e gli ultimi 2 turni (troncati come per il Router), mai i risultati degli strumenti. Client separato **senza strumenti**, `reasoning_effort="none"`, schema JSON (`coerente`, `motivo`) validato con Pydantic.
+- **Correzione:** se la risposta non è coerente, il motivo arriva all'agente come osservazione («Osservazione del revisore (non è una nuova domanda dell'utente): …»). L'agente risponde di nuovo e può usare ancora gli strumenti; l'osservazione gli chiede di non ripetere le azioni già eseguite nel turno, ma un modello può ignorarla (vedi «Limitazioni note»).
+- **Limite di revisioni:** al massimo `MAX_REVISIONI` correzioni per domanda (predefinito 1, quindi il Revisore giudica al massimo 2 volte). Se l'ultimo giudizio è ancora negativo viene restituita l'ultima risposta e nei log compare un `WARNING`; all'utente non viene aggiunto nessun avviso. Il contatore riparte da zero a ogni domanda.
+- **Cronologia:** la sessione conserva tutto il turno, comprese la prima risposta scartata e l'osservazione. Nelle domande successive però l'agente, il Router e il Revisore non le vedono: ricevono la domanda, gli strumenti usati e la risposta finale.
+- **Errori del Revisore:** se il giudizio non è valido (JSON errato, campo mancante, risposta vuota o troncata) o il server non risponde, viene restituita la risposta dell'agente **senza revisione** (*fail-open*), con un `WARNING`. Il caso non viene mai registrato come approvazione.
+- Il rifiuto del Router e le risposte vuote non passano dal Revisore.
+
+Nei log su stderr (esempi del formato, non esiti misurati):
+
+```
+INFO assistente.revisore: revisore: coerente=true motivo=risponde a entrambe le parti durata=12.3s → fine
+INFO assistente.revisore: revisore: coerente=false motivo=manca il meteo di Roma durata=11.8s → correzione 1/1
+INFO assistente.revisore: revisore: coerente=false motivo=manca ancora il meteo durata=12.0s → limite
+WARNING assistente.revisore: revisore: limite di revisioni raggiunto (1), restituita l'ultima risposta
+WARNING assistente.revisore: revisore: giudizio non valido (ValidationError: campi coerente), risposta restituita senza revisione durata=10.2s
+WARNING assistente.revisore: revisore: non disponibile (APIConnectionError), risposta restituita senza revisione durata=2.1s
+```
+
+Il motivo nei log è troncato a 120 caratteri, su una riga; non compaiono mai la domanda, la risposta, il contesto né l'output grezzo del modello.
+
 ## Limite di passaggi
 
-`MAX_PASSAGGI` è il limite di passaggi del grafo (`recursion_limit` di LangGraph), non di richieste di strumento. Misurato con un modello simulato che chiede sempre lo strumento (LangGraph 1.2.19): con 6 il modello è chiamato 3 volte e lo strumento eseguito 3 volte prima dell'interruzione; con 2, una volta ciascuno. Il test `test_caratterizza_il_limite_di_passaggi` fissa questi valori e segnala se cambiano.
+Il limite di LangGraph (`recursion_limit`) per ogni domanda è:
 
-Con il Router il limite effettivo è `MAX_PASSAGGI + 1`: i valori sopra restano gli stessi, perché il test di caratterizzazione gira sul grafo con il Router. Il rifiuto consuma 2 passaggi e funziona con `MAX_PASSAGGI` ≥ 2 (con 1 compare il messaggio del limite, come già per le risposte senza strumento).
+```
+1 (Router) + (MAX_REVISIONI + 1) × (MAX_PASSAGGI + 1 (Revisore))
+```
 
-Quando il limite è raggiunto il turno viene scartato: la cronologia torna a com'era prima della domanda, compare un messaggio («La richiesta non è stata completata…») e la chat continua.
+Con i valori predefiniti (6 e 1) è 15; con `MAX_REVISIONI=0` è 8. `MAX_PASSAGGI` è quindi il **budget nominale di ogni tentativo** dell'agente, non un limite rigido per tentativo: il limite è unico per tutta la domanda, e un tentativo può usare anche il margine non speso dagli altri.
+
+Valori misurati con modelli simulati (LangGraph 1.2.19), fissati da `test_caratterizza_il_limite_di_passaggi` e dai test del limite in `tests/test_revisore.py`:
+
+- **Ciclo infinito di strumenti** (il modello chiede sempre lo strumento): con i predefiniti il modello è chiamato 7 volte e lo strumento eseguito 7 volte prima dell'interruzione (nello Step 1 erano 3 e 3); con `MAX_PASSAGGI=2` 3 e 3; con `MAX_REVISIONI=0` 4 e 3 (`MAX_PASSAGGI=6`) oppure 2 e 1 (`MAX_PASSAGGI=2`).
+- **Turni riusciti:** con il limite 15 un turno può usare al massimo 14 passaggi; un turno con giudizio finale ne usa sempre un numero dispari, quindi al massimo 13. Per esempio 3 giri di strumenti, una correzione con 1 giro e i due giudizi (13) si completano; con 2 giri nella correzione (15) il turno si interrompe, anche se il Revisore era già stato chiamato due volte.
+- **Valori piccoli:**
+
+  | `MAX_PASSAGGI` | `MAX_REVISIONI` | risposta senza strumenti | un giro di strumento | una correzione senza strumenti |
+  |---|---|---|---|---|
+  | 1 | 0 | interrotta | interrotta | — |
+  | 1 | 1 | completata | interrotta | interrotta |
+  | 2 | 0 | completata | interrotta | — |
+  | 2 | 1 | completata | completata | completata |
+  | 3 | 0 | completata | interrotta | — |
+  | 3 | 1 | completata | completata | completata |
+
+  Con `MAX_PASSAGGI=1` nessuna correzione rientra nel limite. Il rifiuto del Router usa 2 passaggi e si completa con qualunque valore.
+
+Quando il limite è raggiunto il turno viene scartato: la cronologia torna a com'era prima della domanda, compare un messaggio («La richiesta non è stata completata: raggiunto il limite di N passaggi…», dove N è `MAX_PASSAGGI`) e la chat continua. È un caso diverso dal limite di revisioni, che invece restituisce l'ultima risposta.
 
 ## Struttura
 
 ```
 src/assistente/   config, modello (LM Studio), grafo (LangGraph), terminale
                   router (Router di ambito: contesto, prompt, rifiuto)
+                  revisore (Revisore della risposta: giudizio, osservazione, contesto dell'agente)
                   strumenti (orologio e composizione), unita, calcolatrice
                   mcp_client, verifica_mcp (client MCP e controllo di salute)
                   server_mcp, note, meteo (server MCP)
@@ -219,13 +275,18 @@ docs/superpowers/ specifica e piano
 ## Limitazioni note
 
 - **Latenza del Router:** ogni domanda richiede una classificazione in più prima dell'agente. Nelle prove reali del 2026-11-15 (`google/gemma-4-e2b`, 19 classificazioni, in locale e in Docker) ogni classificazione ha richiesto da 6,9 a 61,3 s, **mediana 40,5 s**: quasi sempre fra 33 e 61 s, una sola volta 6,9 s, per una causa non verificata. È accettata provvisoriamente come limite dell'ambiente locale, non come prestazione adeguata. Dettagli in `prove_reali/PROVE.md`.
+- **Latenza del Revisore:** ogni domanda in ambito richiede un giudizio in più dopo la risposta (anche con `MAX_REVISIONI=0`), e ogni correzione aggiunge una risposta dell'agente e un altro giudizio. Valori misurati in `prove_reali/PROVE.md`.
+- **Revisore e dati:** il Revisore controlla coerenza e completezza, non l'esattezza: una risposta completa ma sbagliata (per esempio una data ricavata a memoria) viene approvata. Il motivo che l'agente riceve può essere impreciso.
+- **Azioni ripetute durante una correzione:** l'agente può richiamare uno strumento già eseguito nel turno. Per gli strumenti che leggono costa solo tempo; con `aggiungi_nota` può creare una nota duplicata, perché il modello può ignorare l'avvertenza dell'osservazione. Non esiste un blocco automatico; `elimina_nota` resta protetto dalla conferma nel terminale.
+- **Errori del Revisore:** se il giudizio non è valido o il server non risponde, la risposta arriva senza revisione e può essere incompleta (`WARNING` nei log).
+- **Cronologia:** con le correzioni la cronologia della sessione cresce (al massimo una risposta scartata e un'osservazione per domanda con il predefinito).
 - **Motivo nei log:** è testo generato dal modello. Troncamento e istruzioni dello schema riducono il rischio che riporti parti della richiesta, ma non lo azzerano.
 - **Modello piccolo e sessioni lunghe:** con tutti gli 11 strumenti registrati, `google/gemma-4-e2b` a volte **non chiama lo strumento** e risponde a parole o dalla cronologia. In due sessioni di 22 domande è successo ogni volta sulle stesse 4 domande (catalogo, note, meteo), quindi in modo riproducibile; le stesse domande, in sessioni nuove, hanno scelto lo strumento giusto 12 volte su 12. Non è stato mai chiamato uno strumento sbagliato. Se la risposta sembra inventata o obsoleta (per esempio un elenco di note), riformula la domanda o riavvia l'agente. L'elenco delle note mostrato dal modello senza chiamata può non essere aggiornato. Vedi `prove_reali/PROVE.md`.
 - **Conferma di cancellazione:** una cancellazione non parte mai senza il tuo `s` nel terminale; se il modello non chiama `elimina_nota` non compare la domanda `[s/N]` e non viene cancellato nulla. Con input da pipe una domanda saltata disallinea le righe successive.
 - **Servizi e porte occupate:** se una porta pubblicata (8001 per `server-mcp`, 8000 per `servizi-http`) è già in uso dall'host, `docker compose run --rm assistente` fallisce perché Compose non avvia la dipendenza; usa `docker compose run --rm --no-deps assistente`. Provato per la porta 8001 e per la 8000.
 - **Catalogo e date:** i corsi sono fittizi e le date sono limitate al 2026-2027.
 - **Immagine Docker:** il codice è copiato nell'immagine al momento della build. Dopo ogni modifica a `src/` esegui `docker compose build`, altrimenti `docker compose run` usa l'immagine vecchia.
-- **`MAX_PASSAGGI`:** con 1 falliscono anche le risposte senza strumento; con 2 o 3 non basta un giro completo dello strumento; ne servono almeno 4.
+- **`MAX_PASSAGGI` piccolo:** con `MAX_REVISIONI=1` (predefinito) e `MAX_PASSAGGI=1` nessuna correzione e nessun giro di strumento rientrano nel limite; con 2 o più sì. Con `MAX_REVISIONI=0` un giro di strumento richiede almeno `MAX_PASSAGGI=4`. Tabella completa in «Limite di passaggi».
 - **Fuso orario:** un valore con spazi ai lati (`" Asia/Tokyo"`) viene rifiutato con un errore, e per argomenti del tipo sbagliato il messaggio restituito al modello è lungo.
 - **Errori imprevisti:** un'eccezione non legata al server del modello (per esempio una richiesta di strumento senza identificativo) interrompe la sessione.
 - **Input non valido:** i byte non validi in UTF-8 che il terminale può inviare (per esempio con certi caratteri incollati come `«»`, `°` o uno spazio non separabile in una sessione interattiva di Docker) vengono sostituiti con «�» prima di essere inviati al modello: la sessione non si interrompe, ma il modello vede quel carattere sostitutivo. Conviene riscrivere la riga.
