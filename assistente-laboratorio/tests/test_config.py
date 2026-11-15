@@ -106,3 +106,24 @@ def test_ambito_troppo_lungo():
 
     messaggio = str(errore.value)
     assert "AMBITO_AGENTE" in messaggio and "500" in messaggio and "501" in messaggio
+
+
+@pytest.mark.parametrize("valore", [None, "", "   "])
+def test_max_revisioni_predefinito(valore):
+    env = BASE if valore is None else {**BASE, "MAX_REVISIONI": valore}
+
+    assert carica_config(env).max_revisioni == 1
+
+
+@pytest.mark.parametrize(("valore", "atteso"), [("0", 0), (" 2 ", 2)])
+def test_max_revisioni_valori_validi(valore, atteso):
+    assert carica_config({**BASE, "MAX_REVISIONI": valore}).max_revisioni == atteso
+
+
+@pytest.mark.parametrize("valore", ["-1", "1.5", "uno"])
+def test_max_revisioni_non_valido(valore):
+    with pytest.raises(ErroreConfigurazione) as errore:
+        carica_config({**BASE, "MAX_REVISIONI": valore})
+
+    assert "MAX_REVISIONI" in str(errore.value)
+    assert repr(valore) in str(errore.value)

@@ -164,11 +164,11 @@ import openai
 from assistente.grafo import costruisci_grafo
 from assistente.strumenti import STRUMENTI
 from assistente.terminale import esegui_turno
-from finti import AMBITO_TEST, ClassificatoreSimulato, ModelloSimulato, fuori_ambito, in_ambito
+from finti import AMBITO_TEST, ClassificatoreSimulato, ModelloSimulato, fuori_ambito, approva_sempre, in_ambito
 
 
 def grafo(modello, classificatore):
-    return costruisci_grafo(modello, STRUMENTI, classificatore=classificatore, ambito=AMBITO_TEST)
+    return costruisci_grafo(modello, STRUMENTI, classificatore=classificatore, ambito=AMBITO_TEST, revisore=approva_sempre(), max_revisioni=1)
 
 
 def righe(caplog, logger):
@@ -179,7 +179,7 @@ def test_in_ambito_passa_all_agente(caplog):
     modello = ModelloSimulato([AIMessage("Ok")])
 
     with caplog.at_level(logging.INFO):
-        _, testo = esegui_turno(grafo(modello, in_ambito()), [], "Che ore sono?", 6)
+        _, testo = esegui_turno(grafo(modello, in_ambito()), [], "Che ore sono?", 6, max_revisioni=1)
 
     assert testo == "Ok"
     log = righe(caplog, "assistente.router")
@@ -192,7 +192,7 @@ def test_fuori_ambito_rifiuta_senza_agente_ne_strumenti(caplog):
     modello = ModelloSimulato([AIMessage("non deve rispondere")])
 
     with caplog.at_level(logging.INFO):
-        _, testo = esegui_turno(grafo(modello, fuori_ambito()), [], "Scrivimi una poesia", 6)
+        _, testo = esegui_turno(grafo(modello, fuori_ambito()), [], "Scrivimi una poesia", 6, max_revisioni=1)
 
     assert testo == router.testo_rifiuto(AMBITO_TEST)
     assert modello.chiamate == []
@@ -208,7 +208,7 @@ def test_router_eseguito_una_volta_con_tool_calling(caplog):
     modello = ModelloSimulato([CHIEDE_ORA, AIMessage("Sono le 10.")])
 
     with caplog.at_level(logging.INFO):
-        _, testo = esegui_turno(grafo(modello, classificatore), [], "Che ore sono?", 6)
+        _, testo = esegui_turno(grafo(modello, classificatore), [], "Che ore sono?", 6, max_revisioni=1)
 
     assert testo == "Sono le 10."
     assert len(classificatore.chiamate) == 1
@@ -221,7 +221,7 @@ def test_router_eseguito_una_volta_con_tool_calling(caplog):
 def test_cronologia_dopo_il_rifiuto():
     precedente = [HumanMessage("Ciao"), AIMessage("Salve")]
 
-    cronologia, _ = esegui_turno(grafo(ModelloSimulato([]), fuori_ambito()), precedente, "Scrivimi una poesia", 6)
+    cronologia, _ = esegui_turno(grafo(ModelloSimulato([]), fuori_ambito()), precedente, "Scrivimi una poesia", 6, max_revisioni=1)
 
     assert cronologia[:2] == precedente
     assert [type(m) for m in cronologia[2:]] == [HumanMessage, AIMessage]
@@ -236,7 +236,7 @@ def test_cronologia_in_ambito_identica_a_prima():
     precedente = [HumanMessage("Ciao"), AIMessage("Salve")]
     modello = ModelloSimulato([CHIEDE_ORA, AIMessage("Sono le 10.")])
 
-    cronologia, _ = esegui_turno(grafo(modello, in_ambito()), precedente, "Che ore sono?", 6)
+    cronologia, _ = esegui_turno(grafo(modello, in_ambito()), precedente, "Che ore sono?", 6, max_revisioni=1)
 
     assert [type(m).__name__ for m in cronologia] == [
         "HumanMessage", "AIMessage", "HumanMessage", "AIMessage", "ToolMessage", "AIMessage",
@@ -252,7 +252,7 @@ def test_fuori_ambito_dopo_conversazione_pertinente():
     classificatore = fuori_ambito()
     modello = ModelloSimulato([])
 
-    _, testo = esegui_turno(grafo(modello, classificatore), METEO, "Raccontami la Rivoluzione francese", 6)
+    _, testo = esegui_turno(grafo(modello, classificatore), METEO, "Raccontami la Rivoluzione francese", 6, max_revisioni=1)
 
     assert testo == router.testo_rifiuto(AMBITO_TEST)
     assert modello.chiamate == []
@@ -261,12 +261,12 @@ def test_fuori_ambito_dopo_conversazione_pertinente():
 
 
 def test_in_ambito_dopo_rifiuti():
-    cronologia, _ = esegui_turno(grafo(ModelloSimulato([]), fuori_ambito()), [], "Scrivimi una poesia", 6)
-    cronologia, _ = esegui_turno(grafo(ModelloSimulato([]), fuori_ambito()), cronologia, "E una canzone?", 6)
+    cronologia, _ = esegui_turno(grafo(ModelloSimulato([]), fuori_ambito()), [], "Scrivimi una poesia", 6, max_revisioni=1)
+    cronologia, _ = esegui_turno(grafo(ModelloSimulato([]), fuori_ambito()), cronologia, "E una canzone?", 6, max_revisioni=1)
     classificatore = in_ambito()
     modello = ModelloSimulato([AIMessage("Sono le 10.")])
 
-    _, testo = esegui_turno(grafo(modello, classificatore), cronologia, "Che ore sono?", 6)
+    _, testo = esegui_turno(grafo(modello, classificatore), cronologia, "Che ore sono?", 6, max_revisioni=1)
 
     assert testo == "Sono le 10."
     ricevuti = [m.content for m in modello.chiamate[0]]
@@ -286,7 +286,7 @@ def test_errore_del_server_nel_router(errore):
     precedente = [HumanMessage("Ciao"), AIMessage("Salve")]
     modello = ModelloSimulato([AIMessage("non deve rispondere")])
 
-    cronologia, testo = esegui_turno(grafo(modello, ClassificatoreSimulato([errore])), precedente, "Che ore sono?", 6)
+    cronologia, testo = esegui_turno(grafo(modello, ClassificatoreSimulato([errore])), precedente, "Che ore sono?", 6, max_revisioni=1)
 
     assert testo.startswith("Non riesco a ottenere una risposta dal server")
     assert cronologia == precedente
@@ -296,20 +296,22 @@ def test_errore_del_server_nel_router(errore):
 def test_rifiuto_con_max_passaggi_2():
     modello = ModelloSimulato([])
 
-    _, testo = esegui_turno(grafo(modello, fuori_ambito()), [], "Scrivimi una poesia", 2)
+    _, testo = esegui_turno(grafo(modello, fuori_ambito()), [], "Scrivimi una poesia", 2, max_revisioni=1)
 
     assert testo == router.testo_rifiuto(AMBITO_TEST)
     assert modello.chiamate == []
 
 
-def test_rifiuto_con_max_passaggi_1_fissa_il_limite():
+def test_rifiuto_con_max_passaggi_1_si_completa():
+    # Cambiamento voluto dello Step 2 (spec §8): con il Revisore il limite è 1 + 2 × (1 + 1) = 5 e il
+    # rifiuto usa 2 passaggi, quindi si completa. Nello Step 1 (limite 2) compariva il messaggio del limite.
     precedente = [HumanMessage("Ciao"), AIMessage("Salve")]
     modello = ModelloSimulato([])
 
-    cronologia, testo = esegui_turno(grafo(modello, fuori_ambito()), precedente, "Scrivimi una poesia", 1)
+    cronologia, testo = esegui_turno(grafo(modello, fuori_ambito()), precedente, "Scrivimi una poesia", 1, max_revisioni=1)
 
-    assert "non è stata completata" in testo
-    assert cronologia == precedente
+    assert testo == router.testo_rifiuto(AMBITO_TEST)
+    assert cronologia[:2] == precedente and len(cronologia) == 4
     assert modello.chiamate == []
 
 
@@ -317,7 +319,7 @@ def test_limite_superato_con_router_conserva_la_cronologia():
     precedente = [HumanMessage("Ciao"), AIMessage("Salve")]
     modello = ModelloSimulato([CHIEDE_ORA], ripeti_ultima=True)
 
-    cronologia, testo = esegui_turno(grafo(modello, in_ambito()), precedente, "Che ore sono?", 6)
+    cronologia, testo = esegui_turno(grafo(modello, in_ambito()), precedente, "Che ore sono?", 6, max_revisioni=1)
 
     assert "non è stata completata" in testo
     assert cronologia == precedente
@@ -358,7 +360,7 @@ def test_output_non_valido_inoltra_all_agente(caplog):
     modello = ModelloSimulato([AIMessage("Ok")])
 
     with caplog.at_level(logging.INFO):
-        _, testo = esegui_turno(grafo(modello, ClassificatoreSimulato([esito])), [], "Che ore sono?", 6)
+        _, testo = esegui_turno(grafo(modello, ClassificatoreSimulato([esito])), [], "Che ore sono?", 6, max_revisioni=1)
 
     avviso = controlla_fail_open(caplog, testo, modello, ["ValidationError", "categoria"])
     assert "segreto-grezzo" not in avviso and "boh" not in avviso
@@ -368,7 +370,7 @@ def test_validation_error_del_classificatore_inoltra_all_agente(caplog):
     modello = ModelloSimulato([AIMessage("Ok")])
 
     with caplog.at_level(logging.INFO):
-        _, testo = esegui_turno(grafo(modello, ClassificatoreSimulato([validation_error_reale()])), [], "Che ore sono?", 6)
+        _, testo = esegui_turno(grafo(modello, ClassificatoreSimulato([validation_error_reale()])), [], "Che ore sono?", 6, max_revisioni=1)
 
     avviso = controlla_fail_open(caplog, testo, modello, ["ValidationError", "categoria"])
     assert "segreto-grezzo" not in avviso and "boh" not in avviso
@@ -379,7 +381,7 @@ def test_output_vuoto_inoltra_all_agente(caplog):
     esito = {"raw": AIMessage(""), "parsed": None, "parsing_error": None}
 
     with caplog.at_level(logging.INFO):
-        _, testo = esegui_turno(grafo(modello, ClassificatoreSimulato([esito])), [], "Che ore sono?", 6)
+        _, testo = esegui_turno(grafo(modello, ClassificatoreSimulato([esito])), [], "Che ore sono?", 6, max_revisioni=1)
 
     controlla_fail_open(caplog, testo, modello, ["output vuoto"])
 
@@ -415,7 +417,7 @@ def test_client_reale_con_output_non_valido_inoltra_all_agente(monkeypatch, capl
     modello = ModelloSimulato([AIMessage("Ok")])
 
     with caplog.at_level(logging.INFO):
-        _, testo = esegui_turno(grafo(modello, classificatore), [], "Che ore sono?", 6)
+        _, testo = esegui_turno(grafo(modello, classificatore), [], "Che ore sono?", 6, max_revisioni=1)
 
     avviso = controlla_fail_open(caplog, testo, modello, [])
     assert "segreto-grezzo" not in avviso
@@ -425,7 +427,7 @@ def test_client_reale_con_output_valido_rifiuta(monkeypatch):
     classificatore = classificatore_con_risposta_http(monkeypatch, '{"categoria": "fuori_ambito", "motivo": "estranea"}')
     modello = ModelloSimulato([])
 
-    _, testo = esegui_turno(grafo(modello, classificatore), [], "Scrivimi una poesia", 6)
+    _, testo = esegui_turno(grafo(modello, classificatore), [], "Scrivimi una poesia", 6, max_revisioni=1)
 
     assert testo == router.testo_rifiuto(AMBITO_TEST)
     assert modello.chiamate == []
@@ -437,8 +439,8 @@ def test_log_del_router_senza_dati_superflui(caplog):
     non_valido = {"raw": AIMessage("GREZZO-RICONOSCIBILE"), "parsed": None, "parsing_error": validation_error_reale()}
 
     with caplog.at_level(logging.INFO):
-        esegui_turno(grafo(ModelloSimulato([AIMessage("Ok")]), in_ambito()), precedente, domanda, 6)
-        esegui_turno(grafo(ModelloSimulato([AIMessage("Ok")]), ClassificatoreSimulato([non_valido])), precedente, domanda, 6)
+        esegui_turno(grafo(ModelloSimulato([AIMessage("Ok")]), in_ambito()), precedente, domanda, 6, max_revisioni=1)
+        esegui_turno(grafo(ModelloSimulato([AIMessage("Ok")]), ClassificatoreSimulato([non_valido])), precedente, domanda, 6, max_revisioni=1)
 
     log = righe(caplog, "assistente.router")
     assert log
@@ -464,7 +466,7 @@ def test_motivo_nel_log_breve_e_su_una_riga(caplog):
 
 def test_eccezione_imprevista_non_viene_nascosta():
     with pytest.raises(RuntimeError, match="bug"):
-        esegui_turno(grafo(ModelloSimulato([]), ClassificatoreSimulato([RuntimeError("bug")])), [], "Ciao", 6)
+        esegui_turno(grafo(ModelloSimulato([]), ClassificatoreSimulato([RuntimeError("bug")])), [], "Ciao", 6, max_revisioni=1)
 
 
 def test_risposta_troncata_registra_solo_il_tipo(monkeypatch, caplog):
@@ -472,7 +474,7 @@ def test_risposta_troncata_registra_solo_il_tipo(monkeypatch, caplog):
     modello = ModelloSimulato([AIMessage("Ok")])
 
     with caplog.at_level(logging.INFO):
-        _, testo = esegui_turno(grafo(modello, classificatore), [], "Che ore sono?", 6)
+        _, testo = esegui_turno(grafo(modello, classificatore), [], "Che ore sono?", 6, max_revisioni=1)
 
     avviso = controlla_fail_open(caplog, testo, modello, ["LengthFinishReasonError"])
     assert "segreto-grezzo" not in avviso and "CompletionUsage" not in avviso
@@ -484,5 +486,62 @@ def test_validation_error_fuori_dalla_chiamata_al_classificatore_non_viene_nasco
     modello = ModelloSimulato([AIMessage("Ok")])
 
     with pytest.raises(pydantic.ValidationError):
-        esegui_turno(grafo(modello, in_ambito()), [], "Che ore sono?", 6)
+        esegui_turno(grafo(modello, in_ambito()), [], "Che ore sono?", 6, max_revisioni=1)
+    assert modello.chiamate == []
+
+
+# --- Step 2: osservazioni del Revisore (contrassegno strutturale) ---
+
+TESTO_OSSERVAZIONE = "Osservazione del revisore (non è una nuova domanda dell'utente): manca il meteo"
+
+
+def osservazione(testo=TESTO_OSSERVAZIONE):
+    return HumanMessage(testo, additional_kwargs={"revisione": True})
+
+
+def test_osservazione_riconosciuta_solo_dal_contrassegno():
+    assert router.e_osservazione(osservazione())
+    assert not router.e_osservazione(HumanMessage(TESTO_OSSERVAZIONE))
+    assert not router.e_osservazione(HumanMessage("x", additional_kwargs={"revisione": "true"}))
+    assert not router.e_osservazione(HumanMessage("x", additional_kwargs={"revisione": False}))
+    assert not router.e_osservazione(AIMessage("x", additional_kwargs={"revisione": True}))
+
+
+def test_turni_precedenti_saltano_le_osservazioni():
+    messaggi = [HumanMessage("d1"), AIMessage("bozza"), osservazione(), AIMessage("finale"), HumanMessage("d2")]
+
+    assert turni_precedenti(messaggi) == [("d1", "finale")]
+
+
+def test_domanda_attuale_non_e_mai_un_osservazione():
+    precedenti = [HumanMessage("d0"), AIMessage("r0")]
+    messaggi = [*precedenti, HumanMessage("d"), AIMessage("bozza"), osservazione()]
+
+    assert componi_prompt(messaggi, AMBITO).endswith("DOMANDA ATTUALE:\nd")
+    assert turni_precedenti(messaggi) == turni_precedenti([*precedenti, HumanMessage("d")]) == [("d0", "r0")]
+
+
+def test_testo_dell_osservazione_digitato_dall_utente_e_una_domanda():
+    messaggi = [HumanMessage("d0"), AIMessage("r0"), HumanMessage(TESTO_OSSERVAZIONE)]
+
+    assert componi_prompt(messaggi, AMBITO).endswith("DOMANDA ATTUALE:\n" + TESTO_OSSERVAZIONE)
+    assert turni_precedenti(messaggi) == [("d0", "r0")]
+
+
+def test_testo_contesto_nessuno():
+    assert router.testo_contesto([HumanMessage("d")]) == "(nessuno)"
+    assert router.testo_contesto([HumanMessage("d0"), AIMessage("r0"), HumanMessage("d")]) == "Utente: d0\nAssistente: r0"
+
+
+def test_rifiuto_con_max_passaggi_1_e_zero_revisioni_si_completa():
+    # README («Limite di passaggi»): il rifiuto si completa con qualunque valore; il caso minimo è
+    # MAX_PASSAGGI=1 e MAX_REVISIONI=0, limite 1 + 1 × (1 + 1) = 3, e il rifiuto usa 2 passaggi.
+    modello = ModelloSimulato([])
+    grafo_zero = costruisci_grafo(
+        modello, STRUMENTI, classificatore=fuori_ambito(), ambito=AMBITO_TEST, revisore=approva_sempre(), max_revisioni=0
+    )
+
+    _, testo = esegui_turno(grafo_zero, [], "Scrivimi una poesia", 1, max_revisioni=0)
+
+    assert testo == router.testo_rifiuto(AMBITO_TEST)
     assert modello.chiamate == []

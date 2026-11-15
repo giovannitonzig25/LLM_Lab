@@ -8,6 +8,7 @@ from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
+from assistente.revisore import contesto_agente, crea_nodo_revisore
 from assistente.router import crea_nodo_router, testo_rifiuto
 
 LOG = logging.getLogger("assistente.strumenti")
@@ -18,6 +19,9 @@ class Stato(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     categoria: NotRequired[str]
     motivo: NotRequired[str]
+    inizio_turno: NotRequired[int]  # indice della domanda del turno in corso (scritto dal Router)
+    revisioni: NotRequired[int]  # correzioni richieste dal Revisore nel turno
+    esito_revisione: NotRequired[str]  # approvata, da_correggere, limite, senza_revisione
 
 
 def instrada_router(stato: Stato) -> str:
@@ -26,16 +30,27 @@ def instrada_router(stato: Stato) -> str:
 
 
 def instrada(stato: Stato) -> str:
-    """Dopo il modello: strumenti se ha chiesto di eseguirne, altrimenti fine."""
-    return "strumenti" if getattr(stato["messages"][-1], "tool_calls", None) else END
+    """Dopo il modello: strumenti se ne ha chiesti; fine se la risposta è vuota; altrimenti Revisore."""
+    ultimo = stato["messages"][-1]
+    if getattr(ultimo, "tool_calls", None):
+        return "strumenti"
+    return END if not ultimo.text.strip() else "revisore"
 
 
-def costruisci_grafo(modello, strumenti: Sequence[BaseTool] = (), *, classificatore, ambito: str):
+def instrada_revisore(stato: Stato) -> str:
+    """Dopo il Revisore: di nuovo all'agente solo se serve una correzione."""
+    return "modello" if stato["esito_revisione"] == "da_correggere" else END
+
+
+def costruisci_grafo(
+    modello, strumenti: Sequence[BaseTool] = (), *, classificatore, ambito: str, revisore, max_revisioni: int
+):
     per_nome = {strumento.name: strumento for strumento in strumenti}
 
     def nodo_modello(stato: Stato) -> dict:
         LOG_ROUTER.info("agente: chiamata al modello")
-        return {"messages": [modello.invoke(stato["messages"])]}
+        # Cronologia completa nello stato; all'agente niente bozze e osservazioni dei turni precedenti (spec §9.3).
+        return {"messages": [modello.invoke(contesto_agente(stato["messages"], stato["inizio_turno"]))]}
 
     def nodo_rifiuto(stato: Stato) -> dict:
         LOG_ROUTER.info("rifiuto: risposta fissa, agente non eseguito")
@@ -68,9 +83,11 @@ def costruisci_grafo(modello, strumenti: Sequence[BaseTool] = (), *, classificat
     grafo.add_node("rifiuto", nodo_rifiuto)
     grafo.add_node("modello", nodo_modello)
     grafo.add_node("strumenti", nodo_strumenti)
+    grafo.add_node("revisore", crea_nodo_revisore(revisore, max_revisioni))
     grafo.add_edge(START, "router")
     grafo.add_conditional_edges("router", instrada_router, ["modello", "rifiuto"])
     grafo.add_edge("rifiuto", END)
-    grafo.add_conditional_edges("modello", instrada, ["strumenti", END])
+    grafo.add_conditional_edges("modello", instrada, ["strumenti", "revisore", END])
     grafo.add_edge("strumenti", "modello")
+    grafo.add_conditional_edges("revisore", instrada_revisore, ["modello", END])
     return grafo.compile()

@@ -4,7 +4,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from assistente.grafo import costruisci_grafo
 from assistente.terminale import esegui_chat, esegui_turno
-from finti import AMBITO_TEST, ModelloSimulato, in_ambito
+from finti import AMBITO_TEST, ModelloSimulato, approva_sempre, in_ambito
 
 
 def esegui(grafo, righe):
@@ -18,7 +18,7 @@ def esegui(grafo, righe):
             raise voce
         return voce
 
-    esegui_chat(grafo, 6, leggi, stampato.append)
+    esegui_chat(grafo, 6, leggi, stampato.append, max_revisioni=1)
     return stampato
 
 
@@ -33,7 +33,7 @@ class GrafoSpia:
 
 def grafo_con(*risposte):
     modello = ModelloSimulato([AIMessage(r) if isinstance(r, str) else r for r in risposte])
-    return costruisci_grafo(modello, classificatore=in_ambito(), ambito=AMBITO_TEST), modello
+    return costruisci_grafo(modello, classificatore=in_ambito(), ambito=AMBITO_TEST, revisore=approva_sempre(), max_revisioni=1), modello
 
 
 def test_esci_termina_la_chat():
@@ -100,7 +100,7 @@ def test_errore_del_server_ripristina_la_cronologia():
     grafo, _ = grafo_con(errore)
     precedente = [HumanMessage("Ciao"), AIMessage("Salve")]
 
-    cronologia, testo = esegui_turno(grafo, precedente, "Nuova domanda", 6)
+    cronologia, testo = esegui_turno(grafo, precedente, "Nuova domanda", 6, max_revisioni=1)
 
     assert cronologia == precedente
     assert "/v1/models" in testo
@@ -149,6 +149,7 @@ def test_main_scrive_gli_avvisi_su_stderr_e_continua(monkeypatch, capsys):
         terminale, "componi_strumenti", lambda config, chiedi_conferma=None: ([], ["AVVISO: server MCP assente"])
     )
     monkeypatch.setattr(terminale, "crea_classificatore", lambda config: in_ambito())
+    monkeypatch.setattr(terminale, "crea_revisore", lambda config: approva_sempre())
     monkeypatch.setattr(
         terminale, "crea_modello", lambda config, strumenti: ModelloSimulato([AIMessage("Ciao!")])
     )
@@ -198,6 +199,7 @@ def esegui_main_con_cancellazione(monkeypatch, tmp_path, risposta_conferma, argo
         monkeypatch.setenv("AMBITO_AGENTE", "a")
         monkeypatch.setenv("MCP_URL", url)
         monkeypatch.setattr(terminale, "crea_classificatore", lambda config: in_ambito())
+        monkeypatch.setattr(terminale, "crea_revisore", lambda config: approva_sempre())
         monkeypatch.setattr(
             terminale, "crea_modello",
             lambda config, strumenti: ModelloSimulato([AIMessage("", tool_calls=[richiesta]), AIMessage("Fine")]),

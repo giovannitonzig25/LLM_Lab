@@ -5,7 +5,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from assistente.calcolatrice import calcola, valuta
 from assistente.grafo import costruisci_grafo
-from finti import AMBITO_TEST, ModelloSimulato, in_ambito
+from finti import AMBITO_TEST, ModelloSimulato, approva_sempre, in_ambito
 
 
 @pytest.mark.parametrize("espressione, atteso", [
@@ -120,7 +120,7 @@ def test_il_grafo_riceve_il_risultato():
     richiesta = {"name": "calcola", "args": {"espressione": "17*23+5"}, "id": "k1", "type": "tool_call"}
     modello = ModelloSimulato([AIMessage("", tool_calls=[richiesta]), AIMessage("Fa 396")])
 
-    esito = costruisci_grafo(modello, [calcola], classificatore=in_ambito(), ambito=AMBITO_TEST).invoke({"messages": [HumanMessage("quanto fa 17 per 23 più 5?")]})
+    esito = costruisci_grafo(modello, [calcola], classificatore=in_ambito(), ambito=AMBITO_TEST, revisore=approva_sempre(), max_revisioni=1).invoke({"messages": [HumanMessage("quanto fa 17 per 23 più 5?")]})
 
     risposta = next(m for m in esito["messages"] if isinstance(m, ToolMessage))
     assert risposta.tool_call_id == "k1" and risposta.content == "396"

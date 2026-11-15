@@ -410,3 +410,108 @@ Il valore di 6,9 s (domanda 8) è arrivato subito dopo un altro rifiuto. La caus
 ### Non verificati dal vivo
 
 Fail-open per output non valido e timeout del Router: coperti solo dai test simulati, perché non si possono provocare in modo affidabile con il modello reale.
+
+## Ramo `feat/revisore` — Step 2 Lezione 6: Revisore della risposta (2026-11-15)
+
+Prove reali con LM Studio (`google/gemma-4-e2b`, contesto 8192 token) e Docker Desktop, **distinte dai test simulati** di `tests/test_revisore.py`. Le domande sono state passate da uno script che pilota `python -m assistente.terminale`: invia una riga quando compare «Tu: » o «[s/N]: ». Gli esiti sono stati riletti dai log su stderr.
+- **Durata del Revisore:** il campo `durata=` dei suoi log.
+- **Durata del turno:** misurata dall'esterno dallo script, tra l'invio della domanda e il prompt successivo. Nessun log del programma la registra.
+
+In locale il server MCP usava un **archivio SQLite temporaneo** (`NOTE_DB_PATH` nello scratchpad della sessione), quindi `data/note.db` non è stato toccato: hash SHA-256 uguale prima e dopo le prove.
+
+### Locale, sessione 1 (9 domande, server MCP e servizio HTTP attivi)
+
+| # | Domanda | Revisore | Strumenti | Esito |
+|---|---|---|---|---|
+| 1 | Che ore sono a Tokyo e che tempo fa a Roma? | **false** (11,4 s) su una risposta completa, poi true (7,1 s) | `orologio`, `meteo` | falso rifiuto (vedi sotto), correzione approvata; turno 177 s |
+| 2 | Che ore sono a Londra? | true (7,2 s) | `orologio` ×2 | OK |
+| 3 | Quanto fa 17 per 23 più 5? | true (32,9 s) | `calcola` → 396 | OK |
+| 4 | Che giorno è oggi? | true (6,5 s) | `orologio` | OK, data con strumento |
+| 5 | E domani? | true (26,8 s) | nessuno | OK, continuazione; data ricavata dalla cronologia |
+| 6 | Elenca i corsi del catalogo | true (8,2 s) | nessuno | richiesta di chiarimento giudicata coerente |
+| 7 | Che tempo fa? | — | — | **Router `fuori_ambito`**: rifiuto, Revisore non eseguito (errore di classificazione del Router, non del Revisore) |
+| 8 | Converti 10 miglia in chilometri e dimmi che ore sono a Sydney. | true (8,3 s) | `converti_unita`, `orologio` | OK, due parti al primo giudizio |
+| 9 | Grazie! E a Parigi che ore sono? | — | `orologio` | **errore HTTP 400** di LM Studio dopo 902 s alla seconda chiamata dell'agente (vedi sotto) |
+
+### Locale, sessione 5 (ripetizione, 4 domande)
+
+| # | Domanda | Revisore | Strumenti | Esito |
+|---|---|---|---|---|
+| 1 | Che ore sono a Tokyo e che tempo fa a Roma? | **false** (9,7 s) su una risposta completa, poi true (8,6 s) | `orologio`, `meteo`, **rieseguiti** nella correzione | falso rifiuto; turno 204 s |
+| 2 | Dimmi quanto fa 15 per 7, che tempo fa a Milano e quanti giorni lavorativi ci sono tra il 1 e il 10 dicembre 2026. | true (9,7 s) | `calcola('15/7')`, `meteo`, `giorni_lavorativi` | tre parti affrontate; **calcolo sbagliato approvato** (2,14 invece di 105): il Revisore non verifica i dati, come previsto |
+| 3 | Grazie! E a Parigi che ore sono? (dopo un turno corretto) | true (40,5 s) | `orologio` | OK: nuova domanda pertinente, nessun effetto della vecchia osservazione; nessun 400 |
+| 4 | Cerca nel catalogo un corso di inglese e dimmi che ore sono a New York. | true (57,8 s) | `cerca_catalogo`, `orologio` | OK, nessun risultato nel catalogo segnalato in modo concreto |
+
+### Prove mirate
+
+- **Servizio HTTP fermo (prova 4).** Domanda «Quanti giorni lavorativi ci sono tra il 1 e il 15 dicembre 2026?»: `giorni_lavorativi` → `Errore: servizio non raggiungibile`. La risposta «non sono riuscito… errore del servizio» è stata giudicata true (42,7 s, «indisponibilità concreta del servizio»). Esito: OK.
+- **`MAX_REVISIONI=0` (prova 7)**, impostata dopo il caricamento di `.env`:
+  - Tokyo + Roma, risposta completa: false (9,1 s), `→ limite` e `WARNING … limite di revisioni raggiunto (0)`; restituita la risposta, nessuna correzione;
+  - «Quanto fa 12 per 12?»: l'agente ha chiamato `calcola('12/12')` e ha risposto «fa 1». Il Revisore ha dato false (45,4 s) con il motivo «matematicamente errata», cioè **fuori dal suo criterio**, anche se nel merito corretto. `WARNING` di limite.
+
+  Esito: comportamento di `MAX_REVISIONI=0` OK.
+- **Conferma di `elimina_nota` (prova 6, archivio temporaneo):**
+  - con `n`: `esito=no`, `Errore: cancellazione non confermata dall'utente`, nota ancora presente; risposta giudicata coerente;
+  - una seconda richiesta «Elimina la nota 1» non ha chiamato lo strumento (risposta a parole), quindi la riga `s` successiva è arrivata come domanda (limitazione nota dell'input da file);
+  - ripetuta in una sessione breve («Elimina la nota con id 1», poi `s`): `esito=sì`, «Nota 1 eliminata», elenco successivo vuoto, verificato anche con una lettura diretta dell'archivio temporaneo.
+
+  Esito: OK.
+- **Azioni ripetute (prova 6bis, rilievo D1, archivio temporaneo):** «Aggiungi una nota "prova duplicati revisore" e dimmi che ore sono a Tokyo» → `aggiungi_nota` chiamato **una volta**, risposta approvata al primo giudizio (51,3 s); nell'archivio una sola nota. **Nessun duplicato**, ma la prova **non ha messo alla prova la correzione**: il modello ha risposto subito in modo completo e non era forzabile. Il rischio resta documentato. Nella sessione 5, in un'altra correzione, l'agente ha rieseguito `orologio` e `meteo` (strumenti di lettura): la ripetizione degli strumenti durante una correzione è quindi osservata dal vivo.
+
+### Docker Compose
+
+- `docker compose build`: OK.
+- `docker compose run --rm -T assistente`:
+  - discovery da `server-mcp`;
+  - «Che ore sono a Tokyo?» approvata (8,1 s);
+  - «Che ore sono a Tokyo e che tempo fa a Roma?» (`orologio`, `meteo` via MCP) **approvata al primo giudizio** (43,0 s), con l'orario scritto per esteso («le ore 01:08:13 del 16 novembre 2026»);
+  - turni da 90 e 142 s; `server-mcp` e `servizi-http` `healthy`.
+
+  Esito: OK. Poi `docker compose down`, senza `-v`.
+
+### Requisiti del corso: che cosa è stato visto dal vivo
+
+- **Risposta coerente approvata al primo passaggio:** sì, in molti casi (Londra, calcolo, date, due e tre parti, Docker).
+- **Domanda in due parti con risposta parziale → rifiuto motivato e risposta completa:** **non ottenuta con una risposta davvero parziale**. In 8 domande in più parti (7 in locale, 1 in Docker) l'agente ha sempre risposto a tutte le parti. Il percorso rifiuto → osservazione → correzione → approvazione è stato eseguito dal vivo 2 volte, ma partendo da falsi rifiuti. L'evidenza con una risposta parziale resta coperta dai test simulati (`test_risposta_parziale_rifiutata_e_corretta`).
+- **Limite rispettato con un revisore che rifiuta sempre:** coperto dai test simulati; dal vivo osservato con `MAX_REVISIONI=0`.
+
+### Falsi rifiuti sugli orari (osservazione importante)
+
+La stessa domanda «Che ore sono a Tokyo e che tempo fa a Roma?» con risposta **completa** è stata respinta **3 volte su 3** in locale:
+- sessione 1 (`MAX_REVISIONI=1`): motivo «attuale o futuro» riferito all'orario di Tokyo, poi approvata dopo la correzione;
+- sessione con `MAX_REVISIONI=0` (sezione «Prove mirate»): motivo «informazioni specifiche e datate», risposta restituita con il `WARNING` di limite;
+- sessione 5 (`MAX_REVISIONI=1`): motivo «informazioni specifiche e datate», poi approvata dopo la correzione.
+
+In Docker la stessa domanda è stata approvata, con l'orario scritto per esteso invece che in formato `2026-11-16 00:02:48`. Il legame con il formato è un'**ipotesi non verificata**.
+
+È il rischio annotato nella specifica (§14: esempio B sugli orari, possibile adattamento eccessivo dello spike). Con il limite predefinito costa una correzione: la risposta corretta arriva comunque, ma il turno si allunga (177–204 s) e l'agente riesegue gli strumenti. Le istruzioni **non** sono state modificate: la specifica chiede di ripetere lo spike per qualunque cambiamento (§5.2). **Decisione dell'utente (2026-11-15):** limitazione accettata per lo Step 2; un eventuale miglioramento andrà affrontato separatamente, con nuovi esperimenti e test.
+
+### Errore HTTP 400 alla domanda 9 della sessione 1 (non riprodotto)
+
+- **Che cosa è successo:** dopo `orologio(Europe/Paris)`, la chiamata all'agente è rimasta senza risposta per circa 900 s e poi LM Studio ha restituito `Error code: 400`. Il programma ha mostrato il messaggio di errore del server e ha scartato il turno, con la cronologia invariata. La chat è proseguita. È la gestione degli errori dell'agente, invariata in questo Step.
+- **Indagine:**
+  - la stessa richiesta, ricostruita dai log (2396 token di prompt, 11 strumenti), ha avuto risposta normale in 9,4 s, quindi il contesto non era pieno in partenza;
+  - il client dell'agente lascia ragionare il modello (`reasoning` nei token di uscita);
+  - un ragionamento andato in ciclo fino a riempire il contesto spiegherebbe tempo ed errore, ma **non è verificato**;
+  - nella ripetizione (sessione 5) la stessa domanda dopo un turno corretto è andata a buon fine.
+- **Causa:** non determinata. Il log del server di LM Studio di oggi è vuoto e la richiesta originale non è registrata.
+
+### Latenze
+
+| | Giudizi del Revisore (27) | Turni completi (23, misura esterna) |
+|---|---|---|
+| minimo | 5,6 s | 32,3 s (rifiuto del Router) |
+| massimo | 57,8 s | 203,9 s (turno con correzione) |
+| mediana | 9,7 s | 99,3 s |
+
+Le sessioni sono sette: 1 e 5 in tabella; nella sezione «Prove mirate» le due delle note, quella con `MAX_REVISIONI=0` e quella con il servizio HTTP fermo; infine la sessione Docker. I giudizi contano tutte le righe `revisore:` con `durata=` di queste sessioni. I turni sono quelli conclusi con una risposta. Sono esclusi:
+- le righe `esci`;
+- le risposte `s`/`n` alla conferma;
+- le domande che hanno aperto la conferma;
+- il turno da 902 s con l'errore 400. Il Revisore è in genere più rapido del Router (mediana di quest'ultimo nelle stesse sessioni: circa 34 s). La latenza complessiva resta il limite principale dell'ambiente locale.
+
+### Non verificati dal vivo
+
+- Revisore non raggiungibile e giudizio non valido (fail-open): non provocabili in modo affidabile solo per il Revisore, coperti dai test simulati.
+- Correzione dopo una risposta davvero parziale (vedi sopra).
+- Duplicazione di una nota durante una correzione: non osservata, perché nessuna correzione ha coinvolto `aggiungi_nota`.

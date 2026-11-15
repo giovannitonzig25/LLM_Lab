@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 MAX_PASSAGGI_PREDEFINITO = 6
+MAX_REVISIONI_PREDEFINITO = 1
 MCP_URL_PREDEFINITO = "http://localhost:8001/mcp"
 MCP_TIMEOUT_PREDEFINITO = 10.0
 MCP_ATTESA_AVVIO_PREDEFINITA = 0.0
@@ -23,6 +24,7 @@ class Config:
     modello: str
     max_passaggi: int
     ambito: str
+    max_revisioni: int = MAX_REVISIONI_PREDEFINITO
     mcp_url: str = MCP_URL_PREDEFINITO
     mcp_timeout: float = MCP_TIMEOUT_PREDEFINITO
     mcp_attesa_avvio: float = MCP_ATTESA_AVVIO_PREDEFINITA
@@ -53,6 +55,20 @@ def _secondi(env: Mapping[str, str], nome: str, predefinito: float, minimo_inclu
     return valore
 
 
+def _max_revisioni(env: Mapping[str, str]) -> int:
+    """Correzioni che il Revisore può chiedere per turno: intero non negativo (0 ammesso)."""
+    grezzo = env.get("MAX_REVISIONI", "").strip()
+    if not grezzo:
+        return MAX_REVISIONI_PREDEFINITO
+    try:
+        valore = int(grezzo)
+    except ValueError:
+        valore = -1
+    if valore < 0:
+        raise ErroreConfigurazione(f"MAX_REVISIONI deve essere un intero non negativo, ricevuto: {grezzo!r}")
+    return valore
+
+
 def carica_config(env: Mapping[str, str] = os.environ) -> Config:
     base_url = _obbligatoria(env, "LM_STUDIO_BASE_URL")
     modello = _obbligatoria(env, "LM_STUDIO_MODEL")
@@ -73,6 +89,7 @@ def carica_config(env: Mapping[str, str] = os.environ) -> Config:
         modello=modello,
         max_passaggi=max_passaggi,
         ambito=ambito,
+        max_revisioni=_max_revisioni(env),
         mcp_url=env.get("MCP_URL", "").strip() or MCP_URL_PREDEFINITO,
         mcp_timeout=_secondi(env, "MCP_TIMEOUT", MCP_TIMEOUT_PREDEFINITO, minimo_incluso=False),
         mcp_attesa_avvio=_secondi(env, "MCP_ATTESA_AVVIO", MCP_ATTESA_AVVIO_PREDEFINITA, minimo_incluso=True),

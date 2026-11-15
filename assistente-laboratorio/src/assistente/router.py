@@ -14,6 +14,8 @@ MAX_RISPOSTA_CONTESTO = 500
 MAX_DOMANDA_CONTESTO = 300
 NESSUNA_RISPOSTA = "(nessuna risposta)"
 MAX_MOTIVO_LOG = 120
+# Contrassegno strutturale delle osservazioni del Revisore (spec Step 2 §9.1): mai riconosciute dal testo.
+CHIAVE_REVISIONE = "revisione"
 DESCRIZIONE_MOTIVO = (
     "Una motivazione breve e generica della classificazione, in italiano, "
     "senza ripetere il testo della richiesta né dati personali."
@@ -48,9 +50,14 @@ class Classificazione(BaseModel):
     motivo: str = Field(min_length=1, description=DESCRIZIONE_MOTIVO)
 
 
+def e_osservazione(messaggio: BaseMessage) -> bool:
+    """Vero solo per un HumanMessage contrassegnato dal programma come osservazione del Revisore."""
+    return isinstance(messaggio, HumanMessage) and messaggio.additional_kwargs.get(CHIAVE_REVISIONE) is True
+
+
 def _indice_domanda_attuale(messaggi: Sequence[BaseMessage]) -> int:
     for indice in range(len(messaggi) - 1, -1, -1):
-        if isinstance(messaggi[indice], HumanMessage):
+        if isinstance(messaggi[indice], HumanMessage) and not e_osservazione(messaggi[indice]):
             return indice
     raise ValueError("nessuna domanda dell'utente nei messaggi")
 
@@ -59,6 +66,8 @@ def turni_precedenti(messaggi: Sequence[BaseMessage]) -> list[tuple[str, str]]:
     """Ultimi turni conversazionali (domanda, risposta finale) prima della domanda attuale, già troncati."""
     turni: list[list[str]] = []
     for messaggio in messaggi[: _indice_domanda_attuale(messaggi)]:
+        if e_osservazione(messaggio):
+            continue
         if isinstance(messaggio, HumanMessage):
             turni.append([messaggio.text, ""])
         elif turni and isinstance(messaggio, AIMessage) and not messaggio.tool_calls:
@@ -69,11 +78,15 @@ def turni_precedenti(messaggi: Sequence[BaseMessage]) -> list[tuple[str, str]]:
     ]
 
 
+def testo_contesto(messaggi: Sequence[BaseMessage]) -> str:
+    """Turni precedenti come righe `Utente:`/`Assistente:`, oppure `(nessuno)`: condiviso da Router e Revisore."""
+    return "\n".join(f"Utente: {d}\nAssistente: {r}" for d, r in turni_precedenti(messaggi)) or "(nessuno)"
+
+
 def componi_prompt(messaggi: Sequence[BaseMessage], ambito: str) -> str:
     """Unico testo per il Router: istruzioni, ambito, turni precedenti e domanda attuale (una sola volta)."""
     domanda = messaggi[_indice_domanda_attuale(messaggi)].text
-    contesto = "\n".join(f"Utente: {d}\nAssistente: {r}" for d, r in turni_precedenti(messaggi)) or "(nessuno)"
-    return ISTRUZIONI.format(ambito=ambito, contesto=contesto, domanda=domanda)
+    return ISTRUZIONI.format(ambito=ambito, contesto=testo_contesto(messaggi), domanda=domanda)
 
 
 def testo_rifiuto(ambito: str) -> str:
@@ -85,7 +98,7 @@ def motivo_per_log(motivo: str) -> str:
     return " ".join(motivo.split())[:MAX_MOTIVO_LOG]
 
 
-def _diagnosi(errore: BaseException | None) -> str:
+def diagnosi(errore: BaseException | None) -> str:
     """Solo tipo di errore e campi non validi: mai `str(errore)`, che può contenere l'output del modello."""
     if errore is None:
         return "output vuoto"
@@ -99,6 +112,8 @@ def crea_nodo_router(classificatore, ambito: str) -> Callable[[dict], dict]:
     """Nodo che classifica la domanda attuale; scrive categoria e motivo nello stato, mai nei messaggi."""
 
     def nodo_router(stato: dict) -> dict:
+        # Primo nodo di ogni turno: fissa l'indice della domanda e azzera le correzioni (spec Step 2 §6).
+        turno = {"inizio_turno": len(stato["messages"]) - 1, "revisioni": 0}
         richiesta = [HumanMessage(componi_prompt(stato["messages"], ambito))]
         inizio = time.perf_counter()
         try:
@@ -109,15 +124,15 @@ def crea_nodo_router(classificatore, ambito: str) -> Callable[[dict], dict]:
         durata = time.perf_counter() - inizio
         classificazione = esito["parsed"]
         if classificazione is None or esito.get("parsing_error") is not None:
-            diagnosi = _diagnosi(esito.get("parsing_error"))
-            LOG.warning("router: classificazione non valida (%s), inoltro all'agente durata=%.1fs", diagnosi, durata)
-            tipo = diagnosi.split(":", 1)[0]
-            return {"categoria": "conversazione", "motivo": f"classificazione non riuscita: {tipo}"}
+            testo_diagnosi = diagnosi(esito.get("parsing_error"))
+            LOG.warning("router: classificazione non valida (%s), inoltro all'agente durata=%.1fs", testo_diagnosi, durata)
+            tipo = testo_diagnosi.split(":", 1)[0]
+            return {"categoria": "conversazione", "motivo": f"classificazione non riuscita: {tipo}", **turno}
         destinazione = "agente" if classificazione.categoria == "conversazione" else "rifiuto"
         LOG.info(
             "router: categoria=%s motivo=%s durata=%.1fs → %s",
             classificazione.categoria, motivo_per_log(classificazione.motivo), durata, destinazione,
         )
-        return {"categoria": classificazione.categoria, "motivo": classificazione.motivo}
+        return {"categoria": classificazione.categoria, "motivo": classificazione.motivo, **turno}
 
     return nodo_router
