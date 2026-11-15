@@ -533,3 +533,52 @@ def test_caratterizza_valori_piccoli(con_strumento, max_passaggi, max_revisioni,
     _, testo = turno(ModelloSimulato(risposte), approva_sempre(), max_passaggi=max_passaggi, max_revisioni=max_revisioni)
 
     assert (testo == "Ok") is completato
+
+
+# --- Contesto filtrato dell'agente nei turni successivi (Task 6) ---
+
+
+def test_nuova_domanda_dopo_turno_corretto():
+    modello = ModelloSimulato([AIMessage("BOZZA-1"), CHIEDE_ORA, AIMessage("FINALE-1"), AIMessage("FINALE-2")])
+    revisore = ClassificatoreSimulato([valutazione(False, "manca l'ora"), valutazione(True, "ok"), valutazione(True, "ok")])
+    classificatore = in_ambito()
+    grafo = grafo_revisore(modello, revisore, classificatore=classificatore)
+
+    cronologia, _ = esegui_turno(grafo, [], DOMANDA_DUE_PARTI, 6, max_revisioni=1)
+    _, testo = esegui_turno(grafo, cronologia, "Grazie, e domani?", 6, max_revisioni=1)
+
+    assert testo == "FINALE-2"
+    ricevuti = modello.chiamate[-1]
+    assert [type(m).__name__ for m in ricevuti] == ["HumanMessage", "AIMessage", "ToolMessage", "AIMessage", "HumanMessage"]
+    assert [ricevuti[0].text, ricevuti[3].text, ricevuti[4].text] == [DOMANDA_DUE_PARTI, "FINALE-1", "Grazie, e domani?"]
+    [prompt_router] = classificatore.chiamate[-1]
+    [prompt_revisore] = revisore.chiamate[-1]
+    for prompt in (prompt_router.text, prompt_revisore.text):
+        assert "Assistente: FINALE-1" in prompt
+        assert "BOZZA-1" not in prompt and "Osservazione del revisore" not in prompt
+
+
+def test_due_turni_corretti_di_fila():
+    modello = ModelloSimulato([AIMessage(t) for t in ("BOZZA-1", "FINALE-1", "BOZZA-2", "FINALE-2", "FINALE-3")])
+    revisore = ClassificatoreSimulato([valutazione(False, "m"), valutazione(True, "ok")] * 2 + [valutazione(True, "ok")])
+    grafo = grafo_revisore(modello, revisore)
+
+    cronologia, _ = esegui_turno(grafo, [], "d1", 6, max_revisioni=1)
+    cronologia, _ = esegui_turno(grafo, cronologia, "d2", 6, max_revisioni=1)
+    esegui_turno(grafo, cronologia, "d3", 6, max_revisioni=1)
+
+    ricevuti = modello.chiamate[-1]
+    assert not any(e_osservazione(m) for m in ricevuti)
+    assert [m.text for m in ricevuti] == ["d1", "FINALE-1", "d2", "FINALE-2", "d3"]
+
+
+def test_turno_precedente_al_limite_resta_intero():
+    modello = ModelloSimulato([AIMessage("PRIMA-BOZZA"), AIMessage("ULTIMA"), AIMessage("r2")])
+    revisore = ClassificatoreSimulato([valutazione(False, "m"), valutazione(False, "m"), valutazione(True, "ok")])
+    grafo = grafo_revisore(modello, revisore)
+
+    cronologia, testo = esegui_turno(grafo, [], "d1", 6, max_revisioni=1)
+    esegui_turno(grafo, cronologia, "d2", 6, max_revisioni=1)
+
+    assert testo == "ULTIMA"
+    assert [m.text for m in modello.chiamate[-1]] == ["d1", "ULTIMA", "d2"]

@@ -8,7 +8,7 @@ from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
-from assistente.revisore import crea_nodo_revisore
+from assistente.revisore import contesto_agente, crea_nodo_revisore
 from assistente.router import crea_nodo_router, testo_rifiuto
 
 LOG = logging.getLogger("assistente.strumenti")
@@ -49,7 +49,8 @@ def costruisci_grafo(
 
     def nodo_modello(stato: Stato) -> dict:
         LOG_ROUTER.info("agente: chiamata al modello")
-        return {"messages": [modello.invoke(stato["messages"])]}
+        # Cronologia completa nello stato; all'agente niente bozze e osservazioni dei turni precedenti (spec §9.3).
+        return {"messages": [modello.invoke(contesto_agente(stato["messages"], stato["inizio_turno"]))]}
 
     def nodo_rifiuto(stato: Stato) -> dict:
         LOG_ROUTER.info("rifiuto: risposta fissa, agente non eseguito")
