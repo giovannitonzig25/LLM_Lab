@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 MAX_PASSAGGI_PREDEFINITO = 6
 MAX_REVISIONI_PREDEFINITO = 1
+SOGLIA_RIASSUNTO_PREDEFINITA = 20
 MCP_URL_PREDEFINITO = "http://localhost:8001/mcp"
 MCP_TIMEOUT_PREDEFINITO = 10.0
 MCP_ATTESA_AVVIO_PREDEFINITA = 0.0
@@ -25,6 +26,7 @@ class Config:
     max_passaggi: int
     ambito: str
     max_revisioni: int = MAX_REVISIONI_PREDEFINITO
+    soglia_riassunto: int = SOGLIA_RIASSUNTO_PREDEFINITA
     mcp_url: str = MCP_URL_PREDEFINITO
     mcp_timeout: float = MCP_TIMEOUT_PREDEFINITO
     mcp_attesa_avvio: float = MCP_ATTESA_AVVIO_PREDEFINITA
@@ -69,6 +71,20 @@ def _max_revisioni(env: Mapping[str, str]) -> int:
     return valore
 
 
+def _soglia_riassunto(env: Mapping[str, str]) -> int:
+    """Messaggi oltre i quali i turni più vecchi vengono riassunti: intero positivo."""
+    grezzo = env.get("SOGLIA_RIASSUNTO", "").strip()
+    if not grezzo:
+        return SOGLIA_RIASSUNTO_PREDEFINITA
+    try:
+        valore = int(grezzo)
+    except ValueError:
+        valore = 0
+    if valore < 1:
+        raise ErroreConfigurazione(f"SOGLIA_RIASSUNTO deve essere un intero positivo, ricevuto: {grezzo!r}")
+    return valore
+
+
 def carica_config(env: Mapping[str, str] = os.environ) -> Config:
     base_url = _obbligatoria(env, "LM_STUDIO_BASE_URL")
     modello = _obbligatoria(env, "LM_STUDIO_MODEL")
@@ -90,6 +106,7 @@ def carica_config(env: Mapping[str, str] = os.environ) -> Config:
         max_passaggi=max_passaggi,
         ambito=ambito,
         max_revisioni=_max_revisioni(env),
+        soglia_riassunto=_soglia_riassunto(env),
         mcp_url=env.get("MCP_URL", "").strip() or MCP_URL_PREDEFINITO,
         mcp_timeout=_secondi(env, "MCP_TIMEOUT", MCP_TIMEOUT_PREDEFINITO, minimo_incluso=False),
         mcp_attesa_avvio=_secondi(env, "MCP_ATTESA_AVVIO", MCP_ATTESA_AVVIO_PREDEFINITA, minimo_incluso=True),

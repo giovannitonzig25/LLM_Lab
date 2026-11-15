@@ -127,3 +127,24 @@ def test_max_revisioni_non_valido(valore):
 
     assert "MAX_REVISIONI" in str(errore.value)
     assert repr(valore) in str(errore.value)
+
+
+@pytest.mark.parametrize("valore", [None, "", "   "])
+def test_soglia_riassunto_predefinita(valore):
+    env = BASE if valore is None else {**BASE, "SOGLIA_RIASSUNTO": valore}
+
+    assert carica_config(env).soglia_riassunto == 20
+
+
+@pytest.mark.parametrize(("valore", "atteso"), [("1", 1), (" 6 ", 6)])
+def test_soglia_riassunto_valori_validi(valore, atteso):
+    assert carica_config({**BASE, "SOGLIA_RIASSUNTO": valore}).soglia_riassunto == atteso
+
+
+@pytest.mark.parametrize("valore", ["0", "-3", "2.5", "venti"])
+def test_soglia_riassunto_non_valida(valore):
+    with pytest.raises(ErroreConfigurazione) as errore:
+        carica_config({**BASE, "SOGLIA_RIASSUNTO": valore})
+
+    assert "SOGLIA_RIASSUNTO" in str(errore.value)
+    assert repr(valore) in str(errore.value)
