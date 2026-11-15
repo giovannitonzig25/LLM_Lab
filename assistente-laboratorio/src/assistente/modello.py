@@ -5,6 +5,7 @@ from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 
 from assistente.config import Config
+from assistente.revisore import Valutazione
 from assistente.router import Classificazione
 
 
@@ -23,3 +24,8 @@ def crea_client_router(config: Config) -> ChatOpenAI:
 
 def crea_classificatore(config: Config):
     return crea_client_router(config).with_structured_output(Classificazione, method="json_schema", include_raw=True)
+
+
+def crea_revisore(config: Config):
+    """Revisore: client separato (nuova istanza) con le stesse impostazioni del Router, senza strumenti."""
+    return crea_client_router(config).with_structured_output(Valutazione, method="json_schema", include_raw=True)

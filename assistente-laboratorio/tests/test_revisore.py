@@ -216,3 +216,74 @@ def test_contesto_non_modifica_la_lista():
 
     assert messaggi == copia
     assert contesto is not messaggi
+
+
+# --- Client del Revisore e richieste HTTP (Task 4) ---
+
+import functools
+import json
+
+import httpx
+from langchain_openai import ChatOpenAI
+
+from assistente import modello as modulo_modello
+from assistente.config import Config
+from assistente.strumenti import STRUMENTI
+
+
+def _config():
+    return Config(base_url="http://localhost:1234/v1", modello="google/gemma-4-e2b", max_passaggi=6, ambito="Ambito.")
+
+
+def richieste_http(monkeypatch, contenuto="Ok", finish_reason="stop"):
+    """Client veri con trasporto HTTP simulato: registra i corpi delle richieste, nessuna rete."""
+    corpi = []
+
+    def gestore(request):
+        corpi.append(json.loads(request.content))
+        return httpx.Response(200, json={
+            "id": "x", "object": "chat.completion", "created": 0, "model": "m",
+            "choices": [{"index": 0, "finish_reason": finish_reason,
+                         "message": {"role": "assistant", "content": contenuto}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        })
+
+    cliente = httpx.Client(transport=httpx.MockTransport(gestore))
+    monkeypatch.setattr(modulo_modello, "ChatOpenAI", functools.partial(ChatOpenAI, http_client=cliente, max_retries=0))
+    return corpi
+
+
+def test_revisore_senza_strumenti(monkeypatch):
+    corpi = richieste_http(monkeypatch, '{"coerente": true, "motivo": "ok"}')
+
+    esito = modulo_modello.crea_revisore(_config()).invoke([HumanMessage("p")])
+
+    assert esito["parsed"] == Valutazione(coerente=True, motivo="ok")
+    [corpo] = corpi
+    assert "tools" not in corpo
+    assert (corpo["reasoning_effort"], corpo["temperature"], corpo["model"]) == ("none", 0, "google/gemma-4-e2b")
+    assert corpo["response_format"]["type"] == "json_schema"
+
+
+def test_contrassegno_non_inviato_a_lm_studio(monkeypatch):
+    corpi = richieste_http(monkeypatch)
+
+    modulo_modello.crea_modello(_config()).invoke([HumanMessage("d"), AIMessage("bozza"), crea_osservazione("m")])
+
+    messaggi = corpi[0]["messages"]
+    assert messaggi[-1] == {"role": "user", "content": modulo_revisore.testo_osservazione("m")}
+    assert all("name" not in m and "revisione" not in m for m in messaggi)
+
+
+def test_payload_del_contesto_filtrato(monkeypatch):
+    corpi = richieste_http(monkeypatch)
+    precedente = turno_corretto()
+
+    modulo_modello.crea_modello(_config(), STRUMENTI).invoke(
+        contesto_agente([*precedente, HumanMessage("Grazie")], len(precedente))
+    )
+
+    messaggi = corpi[0]["messages"]
+    assert [m["role"] for m in messaggi] == ["user", "assistant", "tool", "assistant", "tool", "assistant", "user"]
+    assert [messaggi[1]["tool_calls"][0]["id"], messaggi[2]["tool_call_id"]] == ["c1", "c1"]
+    assert [messaggi[3]["tool_calls"][0]["id"], messaggi[4]["tool_call_id"]] == ["c2", "c2"]
