@@ -321,3 +321,158 @@ def test_limite_superato_con_router_conserva_la_cronologia():
 
     assert "non è stata completata" in testo
     assert cronologia == precedente
+
+
+# --- Fail-open, eccezioni impreviste e dati minimi nei log (Task 5) ---
+
+import functools
+
+from langchain_openai import ChatOpenAI
+
+from assistente import modello as modulo_modello
+
+
+def validation_error_reale():
+    try:
+        Classificazione.model_validate_json('{"categoria": "boh", "motivo": "segreto-grezzo"}')
+    except pydantic.ValidationError as errore:
+        return errore
+    raise AssertionError("doveva fallire")
+
+
+def controlla_fail_open(caplog, testo, modello, attesi):
+    assert testo == "Ok"
+    assert len(modello.chiamate) == 1
+    log = righe(caplog, "assistente.router")
+    avvisi = [r.getMessage() for r in caplog.records if r.name == "assistente.router" and r.levelno == logging.WARNING]
+    assert len(avvisi) == 1
+    assert "classificazione non valida" in avvisi[0] and "inoltro all'agente" in avvisi[0]
+    for atteso in attesi:
+        assert atteso in avvisi[0]
+    assert not any(r.startswith("router: categoria=") for r in log)
+    return avvisi[0]
+
+
+def test_output_non_valido_inoltra_all_agente(caplog):
+    esito = {"raw": AIMessage('{"categoria": "boh"}'), "parsed": None, "parsing_error": validation_error_reale()}
+    modello = ModelloSimulato([AIMessage("Ok")])
+
+    with caplog.at_level(logging.INFO):
+        _, testo = esegui_turno(grafo(modello, ClassificatoreSimulato([esito])), [], "Che ore sono?", 6)
+
+    avviso = controlla_fail_open(caplog, testo, modello, ["ValidationError", "categoria"])
+    assert "segreto-grezzo" not in avviso and "boh" not in avviso
+
+
+def test_validation_error_del_classificatore_inoltra_all_agente(caplog):
+    modello = ModelloSimulato([AIMessage("Ok")])
+
+    with caplog.at_level(logging.INFO):
+        _, testo = esegui_turno(grafo(modello, ClassificatoreSimulato([validation_error_reale()])), [], "Che ore sono?", 6)
+
+    avviso = controlla_fail_open(caplog, testo, modello, ["ValidationError", "categoria"])
+    assert "segreto-grezzo" not in avviso and "boh" not in avviso
+
+
+def test_output_vuoto_inoltra_all_agente(caplog):
+    modello = ModelloSimulato([AIMessage("Ok")])
+    esito = {"raw": AIMessage(""), "parsed": None, "parsing_error": None}
+
+    with caplog.at_level(logging.INFO):
+        _, testo = esegui_turno(grafo(modello, ClassificatoreSimulato([esito])), [], "Che ore sono?", 6)
+
+    controlla_fail_open(caplog, testo, modello, ["output vuoto"])
+
+
+def classificatore_con_risposta_http(monkeypatch, contenuto, finish_reason="stop"):
+    """Classificatore vero (crea_classificatore) con un trasporto HTTP simulato: nessuna rete, nessun modello."""
+
+    def gestore(request):
+        return httpx.Response(200, json={
+            "id": "x", "object": "chat.completion", "created": 0, "model": "m",
+            "choices": [{"index": 0, "finish_reason": finish_reason,
+                         "message": {"role": "assistant", "content": contenuto}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        })
+
+    cliente = httpx.Client(transport=httpx.MockTransport(gestore))
+    monkeypatch.setattr(modulo_modello, "ChatOpenAI", functools.partial(ChatOpenAI, http_client=cliente, max_retries=0))
+    return modulo_modello.crea_classificatore(_config())
+
+
+@pytest.mark.parametrize(
+    ("contenuto", "finish_reason"),
+    [
+        ('{"categoria": "boh", "motivo": "segreto-grezzo"}', "stop"),
+        ('{"categoria": "conversazione", "motivo": ""}', "stop"),
+        ("segreto-grezzo non JSON", "stop"),
+        ("", "stop"),
+        ('{"categoria": "segreto-grezzo', "length"),
+    ],
+)
+def test_client_reale_con_output_non_valido_inoltra_all_agente(monkeypatch, caplog, contenuto, finish_reason):
+    classificatore = classificatore_con_risposta_http(monkeypatch, contenuto, finish_reason)
+    modello = ModelloSimulato([AIMessage("Ok")])
+
+    with caplog.at_level(logging.INFO):
+        _, testo = esegui_turno(grafo(modello, classificatore), [], "Che ore sono?", 6)
+
+    avviso = controlla_fail_open(caplog, testo, modello, [])
+    assert "segreto-grezzo" not in avviso
+
+
+def test_client_reale_con_output_valido_rifiuta(monkeypatch):
+    classificatore = classificatore_con_risposta_http(monkeypatch, '{"categoria": "fuori_ambito", "motivo": "estranea"}')
+    modello = ModelloSimulato([])
+
+    _, testo = esegui_turno(grafo(modello, classificatore), [], "Scrivimi una poesia", 6)
+
+    assert testo == router.testo_rifiuto(AMBITO_TEST)
+    assert modello.chiamate == []
+
+
+def test_log_del_router_senza_dati_superflui(caplog):
+    domanda = "Mi chiamo Mario Rossi, che ore sono?"
+    precedente = [HumanMessage("Che tempo fa a Roma?"), AIMessage("A Roma 14 °C.")]
+    non_valido = {"raw": AIMessage("GREZZO-RICONOSCIBILE"), "parsed": None, "parsing_error": validation_error_reale()}
+
+    with caplog.at_level(logging.INFO):
+        esegui_turno(grafo(ModelloSimulato([AIMessage("Ok")]), in_ambito()), precedente, domanda, 6)
+        esegui_turno(grafo(ModelloSimulato([AIMessage("Ok")]), ClassificatoreSimulato([non_valido])), precedente, domanda, 6)
+
+    log = righe(caplog, "assistente.router")
+    assert log
+    for riga in log:
+        for vietato in (domanda, "Mario Rossi", "GREZZO-RICONOSCIBILE", "TURNI PRECEDENTI", "Roma"):
+            assert vietato not in riga
+
+
+def test_motivo_nel_log_breve_e_su_una_riga(caplog):
+    motivo = "riga uno\nriga due " + "m" * 300
+    classificatore = ClassificatoreSimulato([Classificazione(categoria="conversazione", motivo=motivo)])
+    grafo_compilato = grafo(ModelloSimulato([AIMessage("Ok")]), classificatore)
+
+    with caplog.at_level(logging.INFO):
+        stato = grafo_compilato.invoke({"messages": [HumanMessage("Che ore sono?")]}, config={"recursion_limit": 7})
+
+    [riga] = [r for r in righe(caplog, "assistente.router") if r.startswith("router: categoria=")]
+    assert "\n" not in riga
+    registrato = riga.split("motivo=", 1)[1].rsplit(" durata=", 1)[0]
+    assert len(registrato) <= 120 and registrato.startswith("riga uno riga due")
+    assert stato["motivo"] == motivo
+
+
+def test_eccezione_imprevista_non_viene_nascosta():
+    with pytest.raises(RuntimeError, match="bug"):
+        esegui_turno(grafo(ModelloSimulato([]), ClassificatoreSimulato([RuntimeError("bug")])), [], "Ciao", 6)
+
+
+def test_risposta_troncata_registra_solo_il_tipo(monkeypatch, caplog):
+    classificatore = classificatore_con_risposta_http(monkeypatch, '{"categoria": "segreto-grezzo', "length")
+    modello = ModelloSimulato([AIMessage("Ok")])
+
+    with caplog.at_level(logging.INFO):
+        _, testo = esegui_turno(grafo(modello, classificatore), [], "Che ore sono?", 6)
+
+    avviso = controlla_fail_open(caplog, testo, modello, ["LengthFinishReasonError"])
+    assert "segreto-grezzo" not in avviso and "CompletionUsage" not in avviso

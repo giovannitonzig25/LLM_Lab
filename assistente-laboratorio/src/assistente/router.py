@@ -4,14 +4,16 @@ import time
 from collections.abc import Callable, Sequence
 from typing import Literal
 
+import openai
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 LOG = logging.getLogger("assistente.router")
 TURNI_CONTESTO = 2
 MAX_RISPOSTA_CONTESTO = 500
 MAX_DOMANDA_CONTESTO = 300
 NESSUNA_RISPOSTA = "(nessuna risposta)"
+MAX_MOTIVO_LOG = 120
 DESCRIZIONE_MOTIVO = (
     "Una motivazione breve e generica della classificazione, in italiano, "
     "senza ripetere il testo della richiesta né dati personali."
@@ -78,18 +80,42 @@ def testo_rifiuto(ambito: str) -> str:
     return "Mi dispiace, questa richiesta è fuori dal mio ambito.\nAmbito dell'assistente: «" + ambito + "»"
 
 
+def motivo_per_log(motivo: str) -> str:
+    """Motivo su una sola riga e breve: nei log non serve altro."""
+    return " ".join(motivo.split())[:MAX_MOTIVO_LOG]
+
+
+def _diagnosi(errore: BaseException | None) -> str:
+    """Solo tipo di errore e campi non validi: mai `str(errore)`, che può contenere l'output del modello."""
+    if errore is None:
+        return "output vuoto"
+    if isinstance(errore, ValidationError):
+        campi = sorted({".".join(str(p) for p in e["loc"]) or "(radice)" for e in errore.errors()})
+        return f"ValidationError: campi {', '.join(campi)}"
+    return type(errore).__name__
+
+
 def crea_nodo_router(classificatore, ambito: str) -> Callable[[dict], dict]:
     """Nodo che classifica la domanda attuale; scrive categoria e motivo nello stato, mai nei messaggi."""
 
     def nodo_router(stato: dict) -> dict:
         inizio = time.perf_counter()
-        esito = classificatore.invoke([HumanMessage(componi_prompt(stato["messages"], ambito))])
+        try:
+            esito = classificatore.invoke([HumanMessage(componi_prompt(stato["messages"], ambito))])
+        # L'SDK openai valida lo schema e il finish_reason dentro la chiamata: output non valido, non errore del server (spec §8).
+        except (ValidationError, openai.LengthFinishReasonError) as errore:
+            esito = {"parsed": None, "parsing_error": errore}
         durata = time.perf_counter() - inizio
         classificazione = esito["parsed"]
+        if classificazione is None or esito.get("parsing_error") is not None:
+            diagnosi = _diagnosi(esito.get("parsing_error"))
+            LOG.warning("router: classificazione non valida (%s), inoltro all'agente durata=%.1fs", diagnosi, durata)
+            tipo = diagnosi.split(":", 1)[0]
+            return {"categoria": "conversazione", "motivo": f"classificazione non riuscita: {tipo}"}
         destinazione = "agente" if classificazione.categoria == "conversazione" else "rifiuto"
         LOG.info(
             "router: categoria=%s motivo=%s durata=%.1fs → %s",
-            classificazione.categoria, classificazione.motivo, durata, destinazione,
+            classificazione.categoria, motivo_per_log(classificazione.motivo), durata, destinazione,
         )
         return {"categoria": classificazione.categoria, "motivo": classificazione.motivo}
 
