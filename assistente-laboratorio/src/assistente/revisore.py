@@ -1,11 +1,14 @@
 """Revisore della risposta: giudica se la risposta finale dell'agente è coerente con la domanda (nessuno strumento)."""
-from collections.abc import Sequence
+import logging
+import time
+from collections.abc import Callable, Sequence
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from pydantic import BaseModel, Field
 
-from assistente.router import CHIAVE_REVISIONE, e_osservazione, testo_contesto
+from assistente.router import CHIAVE_REVISIONE, e_osservazione, motivo_per_log, testo_contesto
 
+LOG = logging.getLogger("assistente.revisore")
 MAX_MOTIVO_OSSERVAZIONE = 300
 DESCRIZIONE_MOTIVO = (
     "Se coerente è false: indicazione concreta per l'agente su che cosa manca o è fuori tema, "
@@ -97,3 +100,34 @@ def contesto_agente(messaggi: Sequence[BaseMessage], inizio_turno: int) -> list[
         if not e_osservazione(messaggio) and not _bozza_scartata(precedenti, indice)
     ]
     return [*filtrati, *messaggi[inizio_turno:]]
+
+
+def crea_nodo_revisore(revisore, max_revisioni: int) -> Callable[[dict], dict]:
+    """Nodo che giudica l'ultima risposta; rimanda all'agente con un'osservazione finché il limite lo permette."""
+
+    def nodo_revisore(stato: dict) -> dict:
+        richiesta = [HumanMessage(componi_prompt(stato["messages"], stato["inizio_turno"]))]
+        inizio = time.perf_counter()
+        esito = revisore.invoke(richiesta)
+        durata = time.perf_counter() - inizio
+        valutazione = esito["parsed"]
+        motivo = motivo_per_log(valutazione.motivo)
+        if valutazione.coerente:
+            LOG.info("revisore: coerente=true motivo=%s durata=%.1fs → fine", motivo, durata)
+            return {"esito_revisione": "approvata"}
+        revisioni = stato["revisioni"]
+        if revisioni < max_revisioni:
+            revisioni += 1
+            LOG.info(
+                "revisore: coerente=false motivo=%s durata=%.1fs → correzione %d/%d", motivo, durata, revisioni, max_revisioni
+            )
+            return {
+                "esito_revisione": "da_correggere",
+                "revisioni": revisioni,
+                "messages": [crea_osservazione(valutazione.motivo)],
+            }
+        LOG.info("revisore: coerente=false motivo=%s durata=%.1fs → limite", motivo, durata)
+        LOG.warning("revisore: limite di revisioni raggiunto (%d), restituita l'ultima risposta", max_revisioni)
+        return {"esito_revisione": "limite"}
+
+    return nodo_revisore

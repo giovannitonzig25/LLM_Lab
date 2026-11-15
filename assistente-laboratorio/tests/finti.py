@@ -24,7 +24,7 @@ AMBITO_TEST = "Ambito di prova."
 
 
 class ClassificatoreSimulato:
-    """Sostituisce il classificatore del Router: restituisce la forma di `include_raw=True` o lancia un'eccezione."""
+    """Sostituisce il classificatore del Router o il Revisore: restituisce la forma di `include_raw=True` o lancia un'eccezione."""
 
     def __init__(self, esiti: list, ripeti_ultima: bool = False):
         self._esiti = list(esiti)
@@ -32,13 +32,14 @@ class ClassificatoreSimulato:
         self.chiamate: list[list[BaseMessage]] = []
 
     def invoke(self, messaggi: list[BaseMessage]):
+        from assistente.revisore import Valutazione
         from assistente.router import Classificazione
 
         self.chiamate.append(list(messaggi))
         esito = self._esiti.pop(0) if len(self._esiti) > 1 or not self._ripeti_ultima else self._esiti[0]
         if isinstance(esito, BaseException):
             raise esito
-        if isinstance(esito, Classificazione):
+        if isinstance(esito, (Classificazione, Valutazione)):
             return {"raw": AIMessage(""), "parsed": esito, "parsing_error": None}
         return esito
 
@@ -53,3 +54,17 @@ def fuori_ambito() -> ClassificatoreSimulato:
     from assistente.router import Classificazione
 
     return ClassificatoreSimulato([Classificazione(categoria="fuori_ambito", motivo="richiesta estranea")], True)
+
+
+def valutazione(coerente: bool, motivo: str):
+    from assistente.revisore import Valutazione
+
+    return Valutazione(coerente=coerente, motivo=motivo)
+
+
+def approva_sempre() -> ClassificatoreSimulato:
+    return ClassificatoreSimulato([valutazione(True, "risposta completa")], True)
+
+
+def rifiuta_sempre(motivo: str = "manca una parte della domanda") -> ClassificatoreSimulato:
+    return ClassificatoreSimulato([valutazione(False, motivo)], True)

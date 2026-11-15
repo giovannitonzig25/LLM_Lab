@@ -112,6 +112,8 @@ def crea_nodo_router(classificatore, ambito: str) -> Callable[[dict], dict]:
     """Nodo che classifica la domanda attuale; scrive categoria e motivo nello stato, mai nei messaggi."""
 
     def nodo_router(stato: dict) -> dict:
+        # Primo nodo di ogni turno: fissa l'indice della domanda e azzera le correzioni (spec Step 2 §6).
+        turno = {"inizio_turno": len(stato["messages"]) - 1, "revisioni": 0}
         richiesta = [HumanMessage(componi_prompt(stato["messages"], ambito))]
         inizio = time.perf_counter()
         try:
@@ -125,12 +127,12 @@ def crea_nodo_router(classificatore, ambito: str) -> Callable[[dict], dict]:
             testo_diagnosi = diagnosi(esito.get("parsing_error"))
             LOG.warning("router: classificazione non valida (%s), inoltro all'agente durata=%.1fs", testo_diagnosi, durata)
             tipo = testo_diagnosi.split(":", 1)[0]
-            return {"categoria": "conversazione", "motivo": f"classificazione non riuscita: {tipo}"}
+            return {"categoria": "conversazione", "motivo": f"classificazione non riuscita: {tipo}", **turno}
         destinazione = "agente" if classificazione.categoria == "conversazione" else "rifiuto"
         LOG.info(
             "router: categoria=%s motivo=%s durata=%.1fs → %s",
             classificazione.categoria, motivo_per_log(classificazione.motivo), durata, destinazione,
         )
-        return {"categoria": classificazione.categoria, "motivo": classificazione.motivo}
+        return {"categoria": classificazione.categoria, "motivo": classificazione.motivo, **turno}
 
     return nodo_router

@@ -9,13 +9,14 @@ from langchain_core.messages import BaseMessage, HumanMessage
 
 from assistente.config import ErroreConfigurazione, carica_config
 from assistente.grafo import costruisci_grafo
-from assistente.modello import crea_classificatore, crea_modello
+from assistente.modello import crea_classificatore, crea_modello, crea_revisore
 from assistente.strumenti import componi_strumenti
 
 LOG = logging.getLogger("assistente.terminale")
 USCITA = "esci"
-# Il Router consuma un passaggio all'inizio di ogni turno: MAX_PASSAGGI resta il margine dell'agente.
+# Il Router consuma un passaggio all'inizio di ogni turno, il Revisore uno per ogni tentativo dell'agente.
 PASSAGGI_ROUTER = 1
+PASSAGGI_REVISORE = 1
 MESSAGGIO_LIMITE = (
     "La richiesta non è stata completata: raggiunto il limite di {limite} passaggi. "
     "Puoi riprovare o riformulare la domanda."
@@ -38,12 +39,19 @@ def chiedi_conferma(messaggio: str) -> bool:
 AVVISO_RISPOSTA_VUOTA = "(Il modello ha restituito una risposta vuota. Riprova o riformula la domanda.)"
 
 
-def esegui_turno(grafo, cronologia: list[BaseMessage], domanda: str, max_passaggi: int) -> tuple[list[BaseMessage], str]:
+def limite_ricorsione(max_passaggi: int, max_revisioni: int) -> int:
+    """`recursion_limit` del turno (spec Step 2 §8): MAX_PASSAGGI è il budget nominale di ogni tentativo."""
+    return PASSAGGI_ROUTER + (max_revisioni + 1) * (max_passaggi + PASSAGGI_REVISORE)
+
+
+def esegui_turno(
+    grafo, cronologia: list[BaseMessage], domanda: str, max_passaggi: int, *, max_revisioni: int
+) -> tuple[list[BaseMessage], str]:
     """Esegue un turno. Se fallisce restituisce la cronologia ricevuta, invariata."""
     try:
         esito = grafo.invoke(
             {"messages": [*cronologia, HumanMessage(domanda)]},
-            config={"recursion_limit": max_passaggi + PASSAGGI_ROUTER},
+            config={"recursion_limit": limite_ricorsione(max_passaggi, max_revisioni)},
         )
     except GraphRecursionError:
         LOG.warning("limite di passaggi raggiunto (%s): turno scartato", max_passaggi)
@@ -64,7 +72,9 @@ def ripulisci_input(testo: str) -> str:
         return testo.encode("utf-8", errors="replace").decode("utf-8")
 
 
-def esegui_chat(grafo, max_passaggi: int, leggi: Callable[[], str], scrivi: Callable[[str], None]) -> None:
+def esegui_chat(
+    grafo, max_passaggi: int, leggi: Callable[[], str], scrivi: Callable[[str], None], *, max_revisioni: int
+) -> None:
     cronologia: list[BaseMessage] = []
     while True:
         try:
@@ -73,7 +83,7 @@ def esegui_chat(grafo, max_passaggi: int, leggi: Callable[[], str], scrivi: Call
                 return
             if not domanda:
                 continue
-            cronologia, testo = esegui_turno(grafo, cronologia, domanda, max_passaggi)
+            cronologia, testo = esegui_turno(grafo, cronologia, domanda, max_passaggi, max_revisioni=max_revisioni)
         except (EOFError, KeyboardInterrupt):
             return
         scrivi(testo)
@@ -90,9 +100,11 @@ def main() -> int:
     for avviso in avvisi:
         print(avviso, file=sys.stderr)
     grafo = costruisci_grafo(
-        crea_modello(config, strumenti), strumenti, classificatore=crea_classificatore(config), ambito=config.ambito
+        crea_modello(config, strumenti), strumenti, classificatore=crea_classificatore(config), ambito=config.ambito,
+        revisore=crea_revisore(config), max_revisioni=config.max_revisioni,
     )
-    esegui_chat(grafo, config.max_passaggi, lambda: input("Tu: "), print)
+    # Lo stesso valore va al grafo (Revisore) e al turno (recursion_limit): spec §17.
+    esegui_chat(grafo, config.max_passaggi, lambda: input("Tu: "), print, max_revisioni=config.max_revisioni)
     return 0
 
 

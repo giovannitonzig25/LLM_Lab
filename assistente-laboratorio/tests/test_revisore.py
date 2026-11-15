@@ -287,3 +287,249 @@ def test_payload_del_contesto_filtrato(monkeypatch):
     assert [m["role"] for m in messaggi] == ["user", "assistant", "tool", "assistant", "tool", "assistant", "user"]
     assert [messaggi[1]["tool_calls"][0]["id"], messaggi[2]["tool_call_id"]] == ["c1", "c1"]
     assert [messaggi[3]["tool_calls"][0]["id"], messaggi[4]["tool_call_id"]] == ["c2", "c2"]
+
+
+# --- Revisore nel grafo, limite di revisioni e recursion_limit (Task 5) ---
+
+import logging
+
+from assistente.grafo import costruisci_grafo
+from assistente.router import e_osservazione
+from assistente.terminale import AVVISO_RISPOSTA_VUOTA, esegui_turno, limite_ricorsione
+from finti import (
+    AMBITO_TEST, ClassificatoreSimulato, ModelloSimulato, approva_sempre, fuori_ambito, in_ambito, rifiuta_sempre,
+    valutazione,
+)
+
+DOMANDA_DUE_PARTI = "Che ore sono a Tokyo e che tempo fa a Roma?"
+CHIEDE_ORA = AIMessage(content="", tool_calls=[{"id": "t1", "name": "orologio", "args": {"timezone": "Asia/Tokyo"}}])
+CHIEDE_CALCOLO = AIMessage(content="", tool_calls=[{"id": "t2", "name": "calcola", "args": {"espressione": "2+2"}}])
+
+
+def grafo_revisore(modello, revisore, max_revisioni=1, classificatore=None):
+    return costruisci_grafo(
+        modello, STRUMENTI, classificatore=classificatore or in_ambito(), ambito=AMBITO_TEST,
+        revisore=revisore, max_revisioni=max_revisioni,
+    )
+
+
+def turno(modello, revisore, domanda=DOMANDA_DUE_PARTI, max_passaggi=6, max_revisioni=1, cronologia=(), classificatore=None):
+    grafo = grafo_revisore(modello, revisore, max_revisioni, classificatore)
+    return esegui_turno(grafo, list(cronologia), domanda, max_passaggi, max_revisioni=max_revisioni)
+
+
+def righe(caplog, logger="assistente.revisore"):
+    return [r.getMessage() for r in caplog.records if r.name == logger]
+
+
+def avvisi(caplog):
+    return [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_limite_ricorsione():
+    assert (limite_ricorsione(6, 1), limite_ricorsione(6, 0), limite_ricorsione(1, 1)) == (15, 8, 5)
+
+
+def test_risposta_coerente_approvata_al_primo_giudizio(caplog):
+    modello, revisore = ModelloSimulato([AIMessage("Sono le 10.")]), approva_sempre()
+
+    with caplog.at_level(logging.INFO):
+        stato = grafo_revisore(modello, revisore).invoke({"messages": [HumanMessage("Che ore sono?")]})
+
+    assert len(revisore.chiamate) == 1
+    assert (stato["revisioni"], stato["esito_revisione"]) == (0, "approvata")
+    assert stato["messages"][-1].text == "Sono le 10."
+    [riga] = righe(caplog)
+    assert riga.startswith("revisore: coerente=true motivo=risposta completa durata=") and riga.endswith("s → fine")
+    assert avvisi(caplog) == []
+
+
+def test_risposta_parziale_rifiutata_e_corretta(caplog):
+    modello = ModelloSimulato([AIMessage("A Tokyo sono le 18."), AIMessage("A Tokyo sono le 18; a Roma 14 °C.")])
+    revisore = ClassificatoreSimulato([valutazione(False, "manca il meteo di Roma"), valutazione(True, "completa")])
+
+    with caplog.at_level(logging.INFO):
+        _, testo = turno(modello, revisore)
+
+    assert testo == "A Tokyo sono le 18; a Roma 14 °C."
+    osservazione = modello.chiamate[1][-1]
+    assert e_osservazione(osservazione)
+    assert "manca il meteo di Roma" in osservazione.text
+    assert "non ripetere le azioni già eseguite in questo turno" in osservazione.text
+    prima, seconda = righe(caplog)
+    assert prima.startswith("revisore: coerente=false motivo=manca il meteo di Roma") and prima.endswith("→ correzione 1/1")
+    assert seconda.startswith("revisore: coerente=true") and seconda.endswith("→ fine")
+    assert avvisi(caplog) == []
+
+
+def test_correzione_con_strumento(caplog):
+    modello = ModelloSimulato([AIMessage("A Tokyo..."), CHIEDE_ORA, AIMessage("A Tokyo sono le 18; a Roma 14 °C.")])
+    revisore = ClassificatoreSimulato([valutazione(False, "manca l'ora"), valutazione(True, "completa")])
+
+    with caplog.at_level(logging.INFO):
+        _, testo = turno(modello, revisore)
+
+    assert testo == "A Tokyo sono le 18; a Roma 14 °C."
+    assert (len(modello.chiamate), len(revisore.chiamate)) == (3, 2)
+    assert len([r for r in righe(caplog, "assistente.strumenti") if "eseguito" in r]) == 1
+
+
+@pytest.mark.parametrize("max_revisioni", [1, 2])
+def test_revisore_che_rifiuta_sempre(caplog, max_revisioni):
+    modello = ModelloSimulato([AIMessage(f"risposta {i}") for i in range(max_revisioni + 1)])
+    revisore = rifiuta_sempre()
+
+    with caplog.at_level(logging.INFO):
+        _, testo = turno(modello, revisore, max_revisioni=max_revisioni)
+
+    assert (len(modello.chiamate), len(revisore.chiamate)) == (max_revisioni + 1, max_revisioni + 1)
+    assert testo == f"risposta {max_revisioni}"
+    log = righe(caplog)
+    assert log[-2].startswith("revisore: coerente=false") and log[-2].endswith("→ limite")
+    assert log[-1] == f"revisore: limite di revisioni raggiunto ({max_revisioni}), restituita l'ultima risposta"
+    assert avvisi(caplog) == [log[-1]]
+    for [prompt] in revisore.chiamate:  # test 10: sempre la domanda originale
+        assert "DOMANDA ATTUALE:\n" + DOMANDA_DUE_PARTI + "\n" in prompt.text
+        assert "Osservazione del revisore" not in prompt.text
+
+
+def test_rifiuto_poi_approvazione_senza_warning(caplog):
+    modello = ModelloSimulato([AIMessage("parziale"), AIMessage("completa")])
+    revisore = ClassificatoreSimulato([valutazione(False, "manca"), valutazione(True, "ok")])
+
+    with caplog.at_level(logging.INFO):
+        stato = grafo_revisore(modello, revisore).invoke({"messages": [HumanMessage(DOMANDA_DUE_PARTI)]})
+
+    assert (stato["revisioni"], stato["esito_revisione"]) == (1, "approvata")
+    assert avvisi(caplog) == []
+
+
+def test_max_revisioni_zero(caplog):
+    modello, revisore = ModelloSimulato([AIMessage("parziale")]), rifiuta_sempre()
+
+    with caplog.at_level(logging.INFO):
+        _, testo = turno(modello, revisore, max_revisioni=0)
+
+    assert testo == "parziale"
+    assert (len(modello.chiamate), len(revisore.chiamate)) == (1, 1)
+    giudizio, limite = righe(caplog)
+    assert giudizio.startswith("revisore: coerente=false") and giudizio.endswith("→ limite")
+    assert limite == "revisore: limite di revisioni raggiunto (0), restituita l'ultima risposta"
+
+
+def test_limite_non_ereditato_tra_turni(caplog):
+    modello = ModelloSimulato([AIMessage("p1"), AIMessage("c1"), AIMessage("p2"), AIMessage("c2")])
+    revisore = ClassificatoreSimulato([valutazione(False, "m"), valutazione(True, "ok")] * 2)
+    grafo = grafo_revisore(modello, revisore)
+
+    with caplog.at_level(logging.INFO):
+        cronologia, primo = esegui_turno(grafo, [], "d1", 6, max_revisioni=1)
+        _, secondo = esegui_turno(grafo, cronologia, "d2", 6, max_revisioni=1)
+
+    assert (primo, secondo) == ("c1", "c2")
+    assert len([r for r in righe(caplog) if r.endswith("→ correzione 1/1")]) == 2
+    assert avvisi(caplog) == []
+
+
+def test_rifiuto_del_router_non_passa_dal_revisore():
+    modello, revisore = ModelloSimulato([]), approva_sempre()
+
+    turno(modello, revisore, domanda="Scrivimi una poesia", classificatore=fuori_ambito())
+
+    assert (modello.chiamate, revisore.chiamate) == ([], [])
+
+
+def test_risposta_vuota_salta_il_revisore():
+    revisore = approva_sempre()
+
+    _, testo = turno(ModelloSimulato([AIMessage("  ")]), revisore)
+
+    assert revisore.chiamate == []
+    assert testo == AVVISO_RISPOSTA_VUOTA
+
+
+def test_cronologia_salvata_con_tutto_il_turno():
+    modello = ModelloSimulato([AIMessage("bozza"), CHIEDE_ORA, AIMessage("finale")])
+    revisore = ClassificatoreSimulato([valutazione(False, "manca l'ora"), valutazione(True, "ok")])
+
+    cronologia, _ = turno(modello, revisore)
+
+    tipi = [type(m).__name__ for m in cronologia]
+    assert tipi == ["HumanMessage", "AIMessage", "HumanMessage", "AIMessage", "ToolMessage", "AIMessage"]
+    assert [cronologia[0].text, cronologia[1].text, cronologia[5].text] == [DOMANDA_DUE_PARTI, "bozza", "finale"]
+    assert e_osservazione(cronologia[2]) and cronologia[3].tool_calls
+
+
+# Limite di passaggi (spec §8): valori previsti e verificati con un prototipo nella review del piano
+# (LangGraph 1.2.19). Un turno riuscito con giudizio finale dura un numero dispari di passaggi
+# (router + per ogni tentativo coppie modello/strumenti, modello e revisore) e può usarne al massimo
+# limite - 1, perché LangGraph usa un passaggio in più per riconoscere la fine.
+
+
+def test_formula_due_giri_di_strumenti():
+    modello = ModelloSimulato([CHIEDE_ORA, CHIEDE_CALCOLO, AIMessage("finale")])
+
+    _, testo = turno(modello, approva_sempre())  # 7 passaggi
+
+    assert testo == "finale"
+
+
+def test_esempio_di_riferimento_9_passaggi():
+    # §8: risposta parziale dopo il primo strumento, correzione con un secondo strumento
+    # (qui `calcola` al posto di `meteo`, che è uno strumento MCP: i passaggi sono gli stessi).
+    modello = ModelloSimulato([CHIEDE_ORA, AIMessage("parziale"), CHIEDE_CALCOLO, AIMessage("finale")])
+    revisore = ClassificatoreSimulato([valutazione(False, "manca il meteo"), valutazione(True, "ok")])
+
+    _, testo = turno(modello, revisore)
+
+    assert testo == "finale"
+
+
+@pytest.mark.parametrize(("giri_correzione", "completato"), [(1, True), (2, False)])
+def test_turno_di_13_passaggi_si_completa_e_15_no(giri_correzione, completato):
+    # 1 + (3 giri + modello + revisore = 8) + (giri_correzione × 2 + 2) = 13 oppure 15, con limite 15.
+    precedente = [HumanMessage("Ciao"), AIMessage("Salve")]
+    risposte = [CHIEDE_ORA] * 3 + [AIMessage("bozza")] + [CHIEDE_ORA] * giri_correzione + [AIMessage("finale")]
+    revisore = ClassificatoreSimulato([valutazione(False, "manca"), valutazione(True, "ok")])
+
+    cronologia, testo = turno(ModelloSimulato(risposte), revisore, cronologia=precedente)
+
+    if completato:
+        assert testo == "finale"
+    else:
+        assert "non è stata completata" in testo
+        assert cronologia == precedente
+        assert len(revisore.chiamate) == 2  # il Revisore è stato chiamato, ma il turno è scartato
+
+
+def test_max_passaggi_1():
+    # Limite 1 + 2 × (1 + 1) = 5: una risposta approvata (3 passaggi) rientra; una correzione
+    # senza strumenti (router, modello, revisore, modello, revisore = 5) no.
+    _, testo = turno(ModelloSimulato([AIMessage("Ok")]), approva_sempre(), max_passaggi=1)
+    assert testo == "Ok"
+
+    precedente = [HumanMessage("Ciao"), AIMessage("Salve")]
+    revisore = ClassificatoreSimulato([valutazione(False, "manca"), valutazione(True, "ok")])
+    cronologia, testo = turno(
+        ModelloSimulato([AIMessage("parziale"), AIMessage("completa")]), revisore, max_passaggi=1, cronologia=precedente
+    )
+    assert "non è stata completata" in testo
+    assert cronologia == precedente
+
+
+@pytest.mark.parametrize(
+    ("con_strumento", "max_passaggi", "max_revisioni", "completato"),
+    [
+        (False, 1, 0, False), (False, 1, 1, True),
+        (True, 1, 0, False), (True, 1, 1, False), (True, 2, 0, False),
+        (True, 3, 0, False), (True, 2, 1, True), (True, 3, 1, True),
+    ],
+)
+def test_caratterizza_valori_piccoli(con_strumento, max_passaggi, max_revisioni, completato):
+    # Valori per il README. Il limite è globale (spec §8): con MAX_REVISIONI=1 il margine del secondo
+    # tentativo, anche se non usato, permette un giro di strumento già con MAX_PASSAGGI=2.
+    risposte = ([CHIEDE_ORA] if con_strumento else []) + [AIMessage("Ok")]
+
+    _, testo = turno(ModelloSimulato(risposte), approva_sempre(), max_passaggi=max_passaggi, max_revisioni=max_revisioni)
+
+    assert (testo == "Ok") is completato

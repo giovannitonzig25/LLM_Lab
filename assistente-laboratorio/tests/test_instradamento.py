@@ -5,7 +5,7 @@ from langgraph.graph import END
 
 from assistente.grafo import costruisci_grafo, instrada
 from assistente.strumenti import STRUMENTI
-from finti import AMBITO_TEST, ModelloSimulato, in_ambito
+from finti import AMBITO_TEST, ModelloSimulato, approva_sempre, in_ambito
 
 
 def richiesta(*chiamate):
@@ -17,12 +17,19 @@ def richiesta(*chiamate):
 
 
 def esegui(modello, domanda="Che ora è?"):
-    grafo = costruisci_grafo(modello, STRUMENTI, classificatore=in_ambito(), ambito=AMBITO_TEST)
+    grafo = costruisci_grafo(modello, STRUMENTI, classificatore=in_ambito(), ambito=AMBITO_TEST, revisore=approva_sempre(), max_revisioni=1)
     return grafo.invoke({"messages": [HumanMessage(domanda)]})["messages"]
 
 
-def test_instrada_senza_tool_calls_termina():
-    assert instrada({"messages": [AIMessage("Ciao")]}) == END
+def test_instrada_risposta_testuale_va_al_revisore():
+    # Cambiamento voluto dello Step 2 (spec §4, confermato dall'utente): una risposta testuale non vuota
+    # passa al Revisore; nello Step 1 terminava il turno.
+    assert instrada({"messages": [AIMessage("Ciao")]}) == "revisore"
+
+
+def test_instrada_risposta_vuota_termina():
+    # Invariato: la risposta vuota non va al Revisore e il terminale mostra AVVISO_RISPOSTA_VUOTA.
+    assert instrada({"messages": [AIMessage("  ")]}) == END
 
 
 def test_instrada_con_tool_calls_va_a_strumenti():
