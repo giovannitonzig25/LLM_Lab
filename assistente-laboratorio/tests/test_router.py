@@ -487,7 +487,7 @@ def test_risposta_troncata_registra_solo_il_tipo(monkeypatch, caplog):
 
 def test_validation_error_fuori_dalla_chiamata_al_classificatore_non_viene_nascosta(monkeypatch):
     """Il fail-open copre solo `classificatore.invoke(...)`: un errore nella composizione del prompt si propaga."""
-    monkeypatch.setattr(router, "componi_prompt", lambda messaggi, ambito: (_ for _ in ()).throw(validation_error_reale()))
+    monkeypatch.setattr(router, "componi_prompt", lambda messaggi, ambito, riassunto="": (_ for _ in ()).throw(validation_error_reale()))
     modello = ModelloSimulato([AIMessage("Ok")])
 
     with pytest.raises(pydantic.ValidationError):

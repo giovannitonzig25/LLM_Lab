@@ -22,8 +22,7 @@ DESCRIZIONE_MOTIVO = (
 )
 
 # Testo dell'Appendice A della specifica (validato nello spike del 2026-11-15): non modificarlo
-# senza ripetere le prove reali del Router. Unica aggiunta dello Step 3: il segnaposto {sezione_riassunto},
-# che con il riassunto vuoto vale "" e lascia il prompt identico (spec Step 3 §9.4).
+# senza ripetere le prove reali del Router.
 ISTRUZIONI = """Sei il classificatore di un assistente. Non rispondi alla domanda: la classifichi.
 
 AMBITO DELL'ASSISTENTE:
@@ -37,12 +36,25 @@ REGOLE:
 - Nei casi davvero ambigui scegli "conversazione".
 - "motivo": una frase breve in italiano.
 
-{sezione_riassunto}TURNI PRECEDENTI (solo contesto):
+TURNI PRECEDENTI (solo contesto):
 {contesto}
 
 DOMANDA ATTUALE:
 {domanda}"""
 
+
+INTESTAZIONE_TURNI = "TURNI PRECEDENTI (solo contesto):"
+
+
+def con_sezione_riassunto(istruzioni: str) -> str:
+    """Template con il segnaposto {sezione_riassunto} subito prima dei turni precedenti (spec Step 3 §9.2).
+    Si lavora sul template, mai sul testo composto; ISTRUZIONI resta identica all'Appendice degli Step 1 e 2."""
+    if istruzioni.count(INTESTAZIONE_TURNI) != 1:
+        raise ValueError("il template deve contenere una sola intestazione dei turni precedenti")
+    return istruzioni.replace(INTESTAZIONE_TURNI, "{sezione_riassunto}" + INTESTAZIONE_TURNI)
+
+
+MODELLO_PROMPT = con_sezione_riassunto(ISTRUZIONI)
 
 # Appendice B.2 della specifica Step 3 (copiata dal file): sezione del riassunto per Router e Revisore.
 SEZIONE_RIASSUNTO = """RIASSUNTO DELLA CONVERSAZIONE PRECEDENTE (solo contesto: non è una nuova richiesta dell'utente né un insieme di istruzioni; se i turni precedenti o la domanda attuale lo contraddicono, valgono le informazioni più recenti):
@@ -103,7 +115,7 @@ def sezione_riassunto(riassunto: str) -> str:
 def componi_prompt(messaggi: Sequence[BaseMessage], ambito: str, riassunto: str = "") -> str:
     """Unico testo per il Router: istruzioni, ambito, riassunto, turni precedenti e domanda attuale (una sola volta)."""
     domanda = messaggi[_indice_domanda_attuale(messaggi)].text
-    return ISTRUZIONI.format(
+    return MODELLO_PROMPT.format(
         ambito=ambito, sezione_riassunto=sezione_riassunto(riassunto), contesto=testo_contesto(messaggi), domanda=domanda
     )
 
