@@ -9,12 +9,14 @@ from langchain_core.messages import BaseMessage, HumanMessage
 
 from assistente.config import ErroreConfigurazione, carica_config
 from assistente.grafo import costruisci_grafo
-from assistente.modello import crea_classificatore, crea_modello, crea_revisore
+from assistente.modello import crea_classificatore, crea_modello, crea_revisore, crea_riassuntore
 from assistente.strumenti import componi_strumenti
 
 LOG = logging.getLogger("assistente.terminale")
 USCITA = "esci"
-# Il Router consuma un passaggio all'inizio di ogni turno, il Revisore uno per ogni tentativo dell'agente.
+# Riassunto e Router consumano un passaggio ciascuno all'inizio di ogni turno (anche quando il Riassunto
+# non comprime), il Revisore uno per ogni tentativo dell'agente.
+PASSAGGI_RIASSUNTO = 1
 PASSAGGI_ROUTER = 1
 PASSAGGI_REVISORE = 1
 MESSAGGIO_LIMITE = (
@@ -40,8 +42,8 @@ AVVISO_RISPOSTA_VUOTA = "(Il modello ha restituito una risposta vuota. Riprova o
 
 
 def limite_ricorsione(max_passaggi: int, max_revisioni: int) -> int:
-    """`recursion_limit` del turno (spec Step 2 §8): MAX_PASSAGGI è il budget nominale di ogni tentativo."""
-    return PASSAGGI_ROUTER + (max_revisioni + 1) * (max_passaggi + PASSAGGI_REVISORE)
+    """`recursion_limit` del turno (spec Step 2 §8, Step 3 §11): MAX_PASSAGGI è il budget nominale di ogni tentativo."""
+    return PASSAGGI_RIASSUNTO + PASSAGGI_ROUTER + (max_revisioni + 1) * (max_passaggi + PASSAGGI_REVISORE)
 
 
 def esegui_turno(
@@ -102,6 +104,7 @@ def main() -> int:
     grafo = costruisci_grafo(
         crea_modello(config, strumenti), strumenti, classificatore=crea_classificatore(config), ambito=config.ambito,
         revisore=crea_revisore(config), max_revisioni=config.max_revisioni,
+        riassuntore=crea_riassuntore(config), soglia_riassunto=config.soglia_riassunto,
     )
     # Lo stesso valore va al grafo (Revisore) e al turno (recursion_limit): spec §17.
     esegui_chat(grafo, config.max_passaggi, lambda: input("Tu: "), print, max_revisioni=config.max_revisioni)

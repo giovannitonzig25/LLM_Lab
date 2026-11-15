@@ -162,13 +162,15 @@ import httpx
 import openai
 
 from assistente.grafo import costruisci_grafo
+from assistente.config import SOGLIA_RIASSUNTO_PREDEFINITA
+from finti import riassuntore_inerte
 from assistente.strumenti import STRUMENTI
 from assistente.terminale import esegui_turno
 from finti import AMBITO_TEST, ClassificatoreSimulato, ModelloSimulato, fuori_ambito, approva_sempre, in_ambito
 
 
 def grafo(modello, classificatore):
-    return costruisci_grafo(modello, STRUMENTI, classificatore=classificatore, ambito=AMBITO_TEST, revisore=approva_sempre(), max_revisioni=1)
+    return costruisci_grafo(modello, STRUMENTI, classificatore=classificatore, ambito=AMBITO_TEST, revisore=approva_sempre(), max_revisioni=1, riassuntore=riassuntore_inerte(), soglia_riassunto=SOGLIA_RIASSUNTO_PREDEFINITA)
 
 
 def righe(caplog, logger):
@@ -305,6 +307,7 @@ def test_rifiuto_con_max_passaggi_2():
 def test_rifiuto_con_max_passaggi_1_si_completa():
     # Cambiamento voluto dello Step 2 (spec §8): con il Revisore il limite è 1 + 2 × (1 + 1) = 5 e il
     # rifiuto usa 2 passaggi, quindi si completa. Nello Step 1 (limite 2) compariva il messaggio del limite.
+    # Step 3 (spec §11): limite 1 + 1 + 2 × (1 + 1) = 6 e il rifiuto usa 3 passaggi (riassunto, router, rifiuto).
     precedente = [HumanMessage("Ciao"), AIMessage("Salve")]
     modello = ModelloSimulato([])
 
@@ -535,10 +538,11 @@ def test_testo_contesto_nessuno():
 
 def test_rifiuto_con_max_passaggi_1_e_zero_revisioni_si_completa():
     # README («Limite di passaggi»): il rifiuto si completa con qualunque valore; il caso minimo è
-    # MAX_PASSAGGI=1 e MAX_REVISIONI=0, limite 1 + 1 × (1 + 1) = 3, e il rifiuto usa 2 passaggi.
+    # MAX_PASSAGGI=1 e MAX_REVISIONI=0, limite 1 + 1 + 1 × (1 + 1) = 4, e il rifiuto usa 3 passaggi
+    # (riassunto, router, rifiuto; spec Step 3 §11).
     modello = ModelloSimulato([])
     grafo_zero = costruisci_grafo(
-        modello, STRUMENTI, classificatore=fuori_ambito(), ambito=AMBITO_TEST, revisore=approva_sempre(), max_revisioni=0
+        modello, STRUMENTI, classificatore=fuori_ambito(), ambito=AMBITO_TEST, revisore=approva_sempre(), max_revisioni=0, riassuntore=riassuntore_inerte(), soglia_riassunto=SOGLIA_RIASSUNTO_PREDEFINITA
     )
 
     _, testo = esegui_turno(grafo_zero, [], "Scrivimi una poesia", 1, max_revisioni=0)

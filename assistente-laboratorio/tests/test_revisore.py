@@ -294,6 +294,8 @@ def test_payload_del_contesto_filtrato(monkeypatch):
 import logging
 
 from assistente.grafo import costruisci_grafo
+from assistente.config import SOGLIA_RIASSUNTO_PREDEFINITA
+from finti import riassuntore_inerte
 from assistente.router import e_osservazione
 from assistente.terminale import AVVISO_RISPOSTA_VUOTA, esegui_turno, limite_ricorsione
 from finti import (
@@ -309,7 +311,7 @@ CHIEDE_CALCOLO = AIMessage(content="", tool_calls=[{"id": "t2", "name": "calcola
 def grafo_revisore(modello, revisore, max_revisioni=1, classificatore=None):
     return costruisci_grafo(
         modello, STRUMENTI, classificatore=classificatore or in_ambito(), ambito=AMBITO_TEST,
-        revisore=revisore, max_revisioni=max_revisioni,
+        revisore=revisore, max_revisioni=max_revisioni, riassuntore=riassuntore_inerte(), soglia_riassunto=SOGLIA_RIASSUNTO_PREDEFINITA,
     )
 
 
@@ -327,7 +329,8 @@ def avvisi(caplog):
 
 
 def test_limite_ricorsione():
-    assert (limite_ricorsione(6, 1), limite_ricorsione(6, 0), limite_ricorsione(1, 1)) == (15, 8, 5)
+    # Spec Step 3 §11: un passaggio per il Riassunto (nello Step 2 erano (15, 8, 5)).
+    assert (limite_ricorsione(6, 1), limite_ricorsione(6, 0), limite_ricorsione(1, 1)) == (16, 9, 6)
 
 
 def test_risposta_coerente_approvata_al_primo_giudizio(caplog):
@@ -461,21 +464,21 @@ def test_cronologia_salvata_con_tutto_il_turno():
 
 
 # Limite di passaggi (spec §8): valori previsti e verificati con un prototipo nella review del piano
-# (LangGraph 1.2.19). Un turno riuscito con giudizio finale dura un numero dispari di passaggi
-# (router + per ogni tentativo coppie modello/strumenti, modello e revisore) e può usarne al massimo
-# limite - 1, perché LangGraph usa un passaggio in più per riconoscere la fine.
+# (LangGraph 1.2.19). Un turno riuscito con giudizio finale dura un numero pari di passaggi
+# (riassunto e router + per ogni tentativo coppie modello/strumenti, modello e revisore; spec Step 3 §11)
+# e può usarne al massimo limite - 1, perché LangGraph usa un passaggio in più per riconoscere la fine.
 
 
 def test_formula_due_giri_di_strumenti():
     modello = ModelloSimulato([CHIEDE_ORA, CHIEDE_CALCOLO, AIMessage("finale")])
 
-    _, testo = turno(modello, approva_sempre())  # 7 passaggi
+    _, testo = turno(modello, approva_sempre())  # 8 passaggi (7 nello Step 2, più il Riassunto)
 
     assert testo == "finale"
 
 
-def test_esempio_di_riferimento_9_passaggi():
-    # §8: risposta parziale dopo il primo strumento, correzione con un secondo strumento
+def test_esempio_di_riferimento_10_passaggi():
+    # §8 (9 passaggi nello Step 2, 10 con il Riassunto, spec Step 3 §11): risposta parziale dopo il primo strumento, correzione con un secondo strumento
     # (qui `calcola` al posto di `meteo`, che è uno strumento MCP: i passaggi sono gli stessi).
     modello = ModelloSimulato([CHIEDE_ORA, AIMessage("parziale"), CHIEDE_CALCOLO, AIMessage("finale")])
     revisore = ClassificatoreSimulato([valutazione(False, "manca il meteo"), valutazione(True, "ok")])
@@ -486,8 +489,9 @@ def test_esempio_di_riferimento_9_passaggi():
 
 
 @pytest.mark.parametrize(("giri_correzione", "completato"), [(1, True), (2, False)])
-def test_turno_di_13_passaggi_si_completa_e_15_no(giri_correzione, completato):
-    # 1 + (3 giri + modello + revisore = 8) + (giri_correzione × 2 + 2) = 13 oppure 15, con limite 15.
+def test_turno_di_14_passaggi_si_completa_e_16_no(giri_correzione, completato):
+    # 2 (riassunto e router) + (3 giri + modello + revisore = 8) + (giri_correzione × 2 + 2) = 14 oppure 16,
+    # con limite 16 (al massimo 15 passaggi; spec Step 3 §11).
     precedente = [HumanMessage("Ciao"), AIMessage("Salve")]
     risposte = [CHIEDE_ORA] * 3 + [AIMessage("bozza")] + [CHIEDE_ORA] * giri_correzione + [AIMessage("finale")]
     revisore = ClassificatoreSimulato([valutazione(False, "manca"), valutazione(True, "ok")])
@@ -503,8 +507,8 @@ def test_turno_di_13_passaggi_si_completa_e_15_no(giri_correzione, completato):
 
 
 def test_max_passaggi_1():
-    # Limite 1 + 2 × (1 + 1) = 5: una risposta approvata (3 passaggi) rientra; una correzione
-    # senza strumenti (router, modello, revisore, modello, revisore = 5) no.
+    # Limite 1 + 1 + 2 × (1 + 1) = 6: una risposta approvata (4 passaggi) rientra; una correzione senza
+    # strumenti (riassunto, router, modello, revisore, modello, revisore = 6) no (spec Step 3 §11).
     _, testo = turno(ModelloSimulato([AIMessage("Ok")]), approva_sempre(), max_passaggi=1)
     assert testo == "Ok"
 

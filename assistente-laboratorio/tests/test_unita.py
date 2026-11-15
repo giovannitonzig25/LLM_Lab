@@ -113,6 +113,8 @@ def test_strumento_con_valore_testuale_non_solleva():
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from assistente.grafo import costruisci_grafo
+from assistente.config import SOGLIA_RIASSUNTO_PREDEFINITA
+from finti import riassuntore_inerte
 from finti import AMBITO_TEST, ModelloSimulato, approva_sempre, in_ambito
 
 
@@ -147,7 +149,7 @@ def test_il_grafo_riceve_l_errore_chiaro_e_prosegue():
     richiesta = {"name": "converti_unita", "args": {"valore": 10, "da": "km"}, "id": "x1", "type": "tool_call"}
     modello = ModelloSimulato([AIMessage("", tool_calls=[richiesta]), AIMessage("Riprovo")])
 
-    esito = costruisci_grafo(modello, [converti_unita], classificatore=in_ambito(), ambito=AMBITO_TEST, revisore=approva_sempre(), max_revisioni=1).invoke({"messages": [HumanMessage("converti")]})
+    esito = costruisci_grafo(modello, [converti_unita], classificatore=in_ambito(), ambito=AMBITO_TEST, revisore=approva_sempre(), max_revisioni=1, riassuntore=riassuntore_inerte(), soglia_riassunto=SOGLIA_RIASSUNTO_PREDEFINITA).invoke({"messages": [HumanMessage("converti")]})
 
     risposta = next(m for m in esito["messages"] if isinstance(m, ToolMessage))
     assert risposta.tool_call_id == "x1"

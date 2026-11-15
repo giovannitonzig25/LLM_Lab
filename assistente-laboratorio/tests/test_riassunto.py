@@ -618,3 +618,75 @@ def test_log_senza_contenuti(caplog, risposte, soglia):
     righe = record(caplog)
     assert righe
     assert all(SEGRETO not in r.getMessage() for r in righe)
+
+
+# --- Nodo nel grafo (Task 5) ----------------------------------------------------------------------
+
+from assistente.grafo import costruisci_grafo
+from finti import ModelloSimulato, approva_sempre, in_ambito, riassuntore_inerte
+
+
+def grafo_con_riassunto(riassuntore, soglia, modello=None, classificatore=None):
+    modello = modello or ModelloSimulato([AIMessage("risposta dell'agente")])
+    classificatore = classificatore or in_ambito()
+    grafo = costruisci_grafo(
+        modello, classificatore=classificatore, ambito=AMBITO_TEST, revisore=approva_sempre(), max_revisioni=1,
+        riassuntore=riassuntore, soglia_riassunto=soglia,
+    )
+    return grafo, modello, classificatore
+
+
+def senza_id(turni: int, domanda: str = "domanda nuova") -> list:
+    messaggi = []
+    for numero in range(1, turni + 1):
+        messaggi += turno_semplice(f"domanda {numero}", f"risposta {numero}")
+    return [*messaggi, HumanMessage(domanda)]
+
+
+def test_grafo_comprime_prima_del_router():
+    riassuntore = RiassuntoreSimulato([riassunto_ok("Obiettivo: simulato")])
+    grafo, modello, classificatore = grafo_con_riassunto(riassuntore, soglia=6)
+
+    esito = grafo.invoke({"messages": senza_id(4), "riassunto": ""})
+
+    assert [m.content for m in esito["messages"]] == [
+        "domanda 3", "risposta 3", "domanda 4", "risposta 4", "domanda nuova", "risposta dell'agente",
+    ]
+    assert esito["riassunto"] == "Obiettivo: simulato"
+    assert classificatore.chiamate[0][0].content.endswith("DOMANDA ATTUALE:\ndomanda nuova")
+    assert esito["messages"][esito["inizio_turno"]].content == "domanda nuova"
+    assert [m.content for m in modello.chiamate[0]][-5:] == [
+        "domanda 3", "risposta 3", "domanda 4", "risposta 4", "domanda nuova",
+    ]
+
+
+def test_grafo_sotto_la_soglia_non_chiama_il_riassuntore():
+    grafo, _, _ = grafo_con_riassunto(riassuntore_inerte(), soglia=20)
+
+    esito = grafo.invoke({"messages": senza_id(4)})
+
+    assert esito.get("riassunto", "") == ""
+    assert len(esito["messages"]) == 10
+
+
+def test_grafo_senza_riassunto_nell_input_comprime_senza_key_error():
+    riassuntore = RiassuntoreSimulato([riassunto_ok("Obiettivo: simulato")])
+    grafo, _, _ = grafo_con_riassunto(riassuntore, soglia=6)
+
+    esito = grafo.invoke({"messages": senza_id(4)})
+
+    assert esito["riassunto"] == "Obiettivo: simulato"
+    assert "<riassunto_precedente>\n(nessuno)\n</riassunto_precedente>" in prompt_inviato(riassuntore)
+
+
+def test_grafo_fail_open_prosegue_verso_l_agente(caplog):
+    caplog.set_level(logging.INFO, logger=NOME_LOG)
+    riassuntore = RiassuntoreSimulato([openai.APIConnectionError(request=_richiesta_http())])
+    grafo, _, _ = grafo_con_riassunto(riassuntore, soglia=6)
+
+    esito = grafo.invoke({"messages": senza_id(4), "riassunto": "R0"})
+
+    assert esito["messages"][-1].content == "risposta dell'agente"
+    assert len(esito["messages"]) == 10
+    assert esito["riassunto"] == "R0"
+    assert len(record(caplog, logging.WARNING)) == 1

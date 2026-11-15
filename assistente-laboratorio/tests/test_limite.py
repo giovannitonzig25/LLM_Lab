@@ -4,6 +4,8 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from assistente.grafo import costruisci_grafo
+from assistente.config import SOGLIA_RIASSUNTO_PREDEFINITA
+from finti import riassuntore_inerte
 from assistente.strumenti import STRUMENTI
 from assistente.terminale import esegui_chat, esegui_turno
 from finti import AMBITO_TEST, ModelloSimulato, approva_sempre, in_ambito
@@ -22,7 +24,7 @@ class ModelloCondizionale:
 
 
 def grafo_in_loop():
-    return costruisci_grafo(ModelloCondizionale(), STRUMENTI, classificatore=in_ambito(), ambito=AMBITO_TEST, revisore=approva_sempre(), max_revisioni=1)
+    return costruisci_grafo(ModelloCondizionale(), STRUMENTI, classificatore=in_ambito(), ambito=AMBITO_TEST, revisore=approva_sempre(), max_revisioni=1, riassuntore=riassuntore_inerte(), soglia_riassunto=SOGLIA_RIASSUNTO_PREDEFINITA)
 
 
 def test_limite_ripristina_la_cronologia():
@@ -67,15 +69,16 @@ def test_log_del_limite(caplog):
 @pytest.mark.parametrize(
     ("limite", "max_revisioni", "chiamate_al_modello", "strumenti_eseguiti"),
     # Valori osservati con LangGraph 1.2.19, non dedotti: vedi README. Con il Revisore (Step 2, spec §8)
-    # il ciclo esegue limite_ricorsione(limite, max_revisioni) passaggi: il Router più chiamate al modello
-    # e strumenti alternati (il Revisore non viene mai raggiunto). Nello Step 1 erano (2, 1, 1) e (6, 3, 3).
+    # il ciclo esegue limite_ricorsione(limite, max_revisioni) passaggi: Riassunto e Router (spec Step 3 §11)
+    # più chiamate al modello e strumenti alternati (il Revisore non viene mai raggiunto). Il passaggio del
+    # Riassunto compensa quello in più della formula: valori invariati. Nello Step 1 erano (2, 1, 1) e (6, 3, 3).
     [(2, 1, 3, 3), (6, 1, 7, 7), (2, 0, 2, 1), (6, 0, 4, 3)],
 )
 def test_caratterizza_il_limite_di_passaggi(caplog, limite, max_revisioni, chiamate_al_modello, strumenti_eseguiti):
     modello = ModelloSimulato([CHIEDE_ORA], ripeti_ultima=True)
     grafo = costruisci_grafo(
         modello, STRUMENTI, classificatore=in_ambito(), ambito=AMBITO_TEST, revisore=approva_sempre(),
-        max_revisioni=max_revisioni,
+        max_revisioni=max_revisioni, riassuntore=riassuntore_inerte(), soglia_riassunto=SOGLIA_RIASSUNTO_PREDEFINITA,
     )
 
     with caplog.at_level(logging.INFO, logger="assistente.strumenti"):
