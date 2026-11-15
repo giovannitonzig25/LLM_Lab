@@ -68,3 +68,26 @@ def approva_sempre() -> ClassificatoreSimulato:
 
 def rifiuta_sempre(motivo: str = "manca una parte della domanda") -> ClassificatoreSimulato:
     return ClassificatoreSimulato([valutazione(False, motivo)], True)
+
+
+class RiassuntoreSimulato(ModelloSimulato):
+    """Riassuntore dello Step 3: registra le chiamate; senza risposte previste segnala che è stato chiamato."""
+
+    def invoke(self, messaggi: list[BaseMessage]) -> AIMessage:
+        if not self._risposte:
+            self.chiamate.append(list(messaggi))
+            raise AssertionError("riassuntore chiamato")
+        return super().invoke(messaggi)
+
+
+def riassunto_ok(testo: str) -> AIMessage:
+    return AIMessage(testo, response_metadata={"finish_reason": "stop"})
+
+
+def riassunto_troncato(testo: str) -> AIMessage:
+    return AIMessage(testo, response_metadata={"finish_reason": "length"})
+
+
+def riassuntore_inerte() -> RiassuntoreSimulato:
+    """Riassuntore che non deve mai essere chiamato: sotto la soglia il nodo non lo usa."""
+    return RiassuntoreSimulato([])

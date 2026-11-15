@@ -1,11 +1,18 @@
-"""Riassunto della cronologia (spec Step 3): turni, taglio, trascrizione e prompt del riassuntore."""
+"""Riassunto della cronologia (spec Step 3): turni, taglio, trascrizione, prompt e nodo del riassuntore."""
 import json
-from collections.abc import Sequence
+import logging
+import time
+from collections.abc import Callable, Sequence
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+import openai
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, RemoveMessage, ToolMessage
 
 from assistente.revisore import e_bozza_scartata
-from assistente.router import e_osservazione, testo_rifiuto
+from assistente.router import diagnosi, e_osservazione, testo_rifiuto
+
+LOG = logging.getLogger("assistente.riassunto")
+ETICHETTA_VUOTO = "vuoto"
+ETICHETTA_TRONCATO = "troncato (finish_reason=length)"
 
 # Turni completi conservati prima della domanda attuale. Distinta da router.TURNI_CONTESTO, che decide
 # quanti turni vedono Router e Revisore: hanno lo stesso valore, così i turni conservati sono quelli che vedono.
@@ -125,3 +132,53 @@ def componi_prompt(riassunto_precedente: str, messaggi_da_togliere: Sequence[Bas
         riassunto=riassunto_precedente or NESSUN_RIASSUNTO,
         turni=trascrivi_turni(messaggi_da_togliere, ambito),
     )
+
+
+def crea_nodo_riassunto(riassuntore, soglia: int, ambito: str) -> Callable[[dict], dict]:
+    """Nodo all'inizio del turno: oltre la soglia sostituisce i turni vecchi con un riassunto aggiornato (spec §6, §8)."""
+
+    def nodo_riassunto(stato: dict) -> dict:
+        messaggi = stato["messages"]
+        prima = len(messaggi)
+        if prima <= soglia:
+            LOG.info("riassunto: soglia non superata (messaggi=%d, soglia=%d), nessuna chiamata", prima, soglia)
+            return {}
+        taglio = indice_taglio(messaggi)
+        if taglio == 0:
+            LOG.info(
+                "riassunto: nessun turno eliminabile (messaggi=%d, soglia=%d, turni completi=%d), nessuna chiamata",
+                prima, soglia, max(len(inizi_turni(messaggi)) - 1, 0),
+            )
+            return {}
+        tolti = messaggi[:taglio]
+        # Composizione fuori dal try: un errore di programmazione qui si propaga (spec §8).
+        richiesta = [HumanMessage(componi_prompt(stato.get("riassunto", ""), tolti, ambito))]
+        inizio = time.perf_counter()
+        try:
+            risposta = riassuntore.invoke(richiesta)
+        # Sottoclasse di OpenAIError: va prima. Solo difensiva, senza output strutturato non arriva (spec §8).
+        except openai.LengthFinishReasonError as errore:
+            return _fail_open(f"output non valido ({diagnosi(errore)})", inizio)
+        except openai.OpenAIError as errore:
+            return _fail_open(f"errore {diagnosi(errore)}", inizio)
+        if risposta.response_metadata.get("finish_reason") == "length":
+            return _fail_open(f"output non valido ({ETICHETTA_TRONCATO})", inizio)
+        if not risposta.text.strip():
+            return _fail_open(f"output non valido ({ETICHETTA_VUOTO})", inizio)
+        durata = time.perf_counter() - inizio
+        LOG.info(
+            "riassunto: compressi %d turni, messaggi %d → %d, durata=%.1fs",
+            len(inizi_turni(tolti)), prima, prima - taglio, durata,
+        )
+        # Aggiornamento atomico: riassunto validato e rimozioni insieme.
+        return {"riassunto": risposta.text, "messages": [RemoveMessage(id=m.id) for m in tolti]}
+
+    return nodo_riassunto
+
+
+def _fail_open(descrizione: str, inizio: float) -> dict:
+    """Nessuna compressione: messaggi e riassunto invariati, il turno prosegue. Nel log mai testi o `str(errore)`."""
+    LOG.warning(
+        "riassunto: %s, nessuna compressione durata=%.1fs", descrizione, time.perf_counter() - inizio
+    )
+    return {}

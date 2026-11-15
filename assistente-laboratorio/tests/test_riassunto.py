@@ -359,3 +359,262 @@ def test_finish_reason_stop(monkeypatch):
 
     assert risposta.response_metadata["finish_reason"] == "stop"
     assert risposta.text == "Obiettivo: viaggio"
+
+
+# --- Nodo Riassunto, fail-open e log (Task 4) -----------------------------------------------------
+
+import logging
+
+import openai
+import pytest
+from langchain_core.messages import RemoveMessage
+
+from finti import RiassuntoreSimulato, riassunto_ok, riassunto_troncato
+
+URL = "http://localhost:1234/v1/chat/completions"
+NOME_LOG = "assistente.riassunto"
+
+
+def con_id(messaggi: list) -> list:
+    """Messaggi come nello stato del grafo: ognuno con un id."""
+    for indice, messaggio in enumerate(messaggi):
+        messaggio.id = f"m{indice}"
+    return messaggi
+
+
+def conversazione(turni: int, domanda: str = "domanda attuale") -> list:
+    messaggi = []
+    for numero in range(1, turni + 1):
+        messaggi += turno_semplice(f"domanda {numero}", f"risposta {numero}")
+    return con_id([*messaggi, HumanMessage(domanda)])
+
+
+def esegui_nodo(riassuntore, messaggi, soglia, riassunto=None):
+    stato = {"messages": messaggi} if riassunto is None else {"messages": messaggi, "riassunto": riassunto}
+    return modulo_riassunto.crea_nodo_riassunto(riassuntore, soglia, AMBITO_TEST)(stato)
+
+
+def id_rimossi(aggiornamento: dict) -> list[str]:
+    assert all(isinstance(m, RemoveMessage) for m in aggiornamento["messages"])
+    return [m.id for m in aggiornamento["messages"]]
+
+
+def prompt_inviato(riassuntore, indice: int = 0) -> str:
+    [richiesta] = riassuntore.chiamate[indice]
+    assert isinstance(richiesta, HumanMessage)
+    return richiesta.content
+
+
+def record(caplog, livello=None):
+    return [r for r in caplog.records if r.name == NOME_LOG and (livello is None or r.levelno == livello)]
+
+
+def test_messaggi_uguali_alla_soglia_nessuna_chiamata(caplog):
+    riassuntore = RiassuntoreSimulato([])
+    caplog.set_level(logging.INFO, logger=NOME_LOG)
+
+    assert esegui_nodo(riassuntore, conversazione(3), soglia=7) == {}
+
+    assert riassuntore.chiamate == []
+    assert any("soglia non superata" in r.getMessage() for r in record(caplog, logging.INFO))
+
+
+def test_soglia_superata_senza_turni_eliminabili(caplog):
+    riassuntore = RiassuntoreSimulato([])
+    caplog.set_level(logging.INFO, logger=NOME_LOG)
+
+    assert esegui_nodo(riassuntore, conversazione(2), soglia=4) == {}
+
+    assert riassuntore.chiamate == []
+    assert any("nessun turno eliminabile" in r.getMessage() for r in record(caplog, logging.INFO))
+
+
+def test_compressione_toglie_il_primo_turno(caplog):
+    riassuntore = RiassuntoreSimulato([riassunto_ok("Obiettivo: prova")])
+    caplog.set_level(logging.INFO, logger=NOME_LOG)
+
+    aggiornamento = esegui_nodo(riassuntore, conversazione(3), soglia=6)
+
+    assert len(riassuntore.chiamate) == 1
+    assert id_rimossi(aggiornamento) == ["m0", "m1"]
+    assert aggiornamento["riassunto"] == "Obiettivo: prova"
+    assert any("messaggi 7 → 5" in r.getMessage() for r in record(caplog, logging.INFO))
+    assert "Utente: domanda 1" in prompt_inviato(riassuntore)
+    assert "domanda 2" not in prompt_inviato(riassuntore)
+
+
+def test_bozza_e_osservazione_contano_per_la_soglia():
+    turno_corretto = [HumanMessage("domanda 1"), AIMessage("BOZZA"), crea_osservazione("OSSERVAZIONE"), AIMessage("finale")]
+    messaggi = con_id([*turno_corretto, *turno_semplice("d2", "r2"), *turno_semplice("d3", "r3"), HumanMessage("d4")])
+    riassuntore = RiassuntoreSimulato([riassunto_ok("R")])
+
+    # 9 messaggi: senza bozza e osservazione sarebbero 7, sotto la soglia 8.
+    aggiornamento = esegui_nodo(riassuntore, messaggi, soglia=8)
+
+    assert len(riassuntore.chiamate) == 1
+    assert id_rimossi(aggiornamento) == ["m0", "m1", "m2", "m3"]
+
+
+def test_turno_corretto_esce_intero():
+    turno_corretto = [HumanMessage("domanda 1"), AIMessage("BOZZA"), crea_osservazione("OSSERVAZIONE"), AIMessage("finale")]
+    messaggi = con_id([*turno_corretto, *turno_semplice("d2", "r2"), *turno_semplice("d3", "r3"), HumanMessage("d4")])
+    riassuntore = RiassuntoreSimulato([riassunto_ok("R")])
+
+    aggiornamento = esegui_nodo(riassuntore, messaggi, soglia=6)
+
+    assert id_rimossi(aggiornamento) == ["m0", "m1", "m2", "m3"]
+    prompt = prompt_inviato(riassuntore)
+    assert "BOZZA" not in prompt and "OSSERVAZIONE" not in prompt
+    assert "Utente: domanda 1\nAssistente: finale" in prompt
+
+
+def test_turno_rifiutato_conta_come_turno():
+    rifiutato = [HumanMessage("ricetta?"), AIMessage(modulo_router.testo_rifiuto(AMBITO_TEST))]
+    messaggi = con_id([*rifiutato, *turno_semplice("d2", "r2"), *turno_semplice("d3", "r3"), HumanMessage("d4")])
+    riassuntore = RiassuntoreSimulato([riassunto_ok("R")])
+
+    aggiornamento = esegui_nodo(riassuntore, messaggi, soglia=6)
+
+    assert id_rimossi(aggiornamento) == ["m0", "m1"]
+    assert "Assistente: (richiesta fuori ambito, rifiutata)" in prompt_inviato(riassuntore)
+
+
+def test_soglia_minima_comprime_solo_se_eliminabile():
+    riassuntore = RiassuntoreSimulato([riassunto_ok("R1")])
+
+    assert esegui_nodo(riassuntore, conversazione(2), soglia=1) == {}
+    assert riassuntore.chiamate == []
+
+    messaggi = conversazione(3)
+    aggiornamento = esegui_nodo(riassuntore, messaggi, soglia=1)
+    rimossi = set(id_rimossi(aggiornamento))
+    restanti = [m for m in messaggi if m.id not in rimossi]
+    assert len(riassuntore.chiamate) == 1
+    assert len(modulo_riassunto.inizi_turni(restanti)) == 3  # 2 turni conservati più la domanda attuale
+
+    assert esegui_nodo(riassuntore, restanti, soglia=1, riassunto=aggiornamento["riassunto"]) == {}
+    assert len(riassuntore.chiamate) == 1
+
+
+def test_riassunto_precedente_nel_prompt_e_sostituito():
+    riassuntore = RiassuntoreSimulato([riassunto_ok("Obiettivo: nuovo")])
+
+    aggiornamento = esegui_nodo(riassuntore, conversazione(3), soglia=6, riassunto="Obiettivo: vecchio")
+
+    assert "<riassunto_precedente>\nObiettivo: vecchio\n</riassunto_precedente>" in prompt_inviato(riassuntore)
+    assert aggiornamento["riassunto"] == "Obiettivo: nuovo"
+
+
+def test_riassunto_salvato_cosi_com_e():
+    testo = "  Obiettivo: viaggio\nPreferenze: nessuna\n"
+    riassuntore = RiassuntoreSimulato([riassunto_ok(testo)])
+
+    assert esegui_nodo(riassuntore, conversazione(3), soglia=6)["riassunto"] == testo
+
+
+def _richiesta_http():
+    return httpx.Request("POST", URL)
+
+
+def _completamento_troncato():
+    from openai.types.chat import ChatCompletion
+
+    return ChatCompletion.model_validate({
+        "id": "x", "object": "chat.completion", "created": 0, "model": "m",
+        "choices": [{"index": 0, "finish_reason": "length", "message": {"role": "assistant", "content": "Obiet"}}],
+    })
+
+
+CASI_FAIL_OPEN = [
+    pytest.param(lambda: openai.APIConnectionError(request=_richiesta_http()), "APIConnectionError", id="connessione"),
+    pytest.param(lambda: openai.APITimeoutError(request=_richiesta_http()), "APITimeoutError", id="timeout"),
+    # Solo l'ordine delle eccezioni: con invoke senza output strutturato è irraggiungibile (spec §8).
+    pytest.param(
+        lambda: openai.LengthFinishReasonError(completion=_completamento_troncato()), "LengthFinishReasonError", id="length-error"
+    ),
+    pytest.param(lambda: riassunto_ok(""), "vuoto", id="vuoto"),
+    pytest.param(lambda: riassunto_ok("   \n"), "vuoto", id="spazi"),
+    pytest.param(lambda: riassunto_troncato("Obiettivo: ..."), "troncato (finish_reason=length)", id="troncato"),
+    pytest.param(lambda: riassunto_troncato(""), "troncato (finish_reason=length)", id="troncato-e-vuoto"),
+]
+
+
+@pytest.mark.parametrize(("esito", "etichetta"), CASI_FAIL_OPEN)
+def test_fail_open(caplog, esito, etichetta):
+    riassuntore = RiassuntoreSimulato([esito()])
+    caplog.set_level(logging.DEBUG, logger=NOME_LOG)
+
+    aggiornamento = esegui_nodo(riassuntore, conversazione(3), soglia=6, riassunto="R0")
+
+    assert aggiornamento == {}
+    assert len(riassuntore.chiamate) == 1
+    [avviso] = record(caplog, logging.WARNING)
+    assert etichetta in avviso.getMessage()
+    assert "nessuna compressione" in avviso.getMessage()
+
+
+def test_length_error_intercettato_prima_di_openai_error(caplog):
+    caplog.set_level(logging.DEBUG, logger=NOME_LOG)
+    riassuntore = RiassuntoreSimulato([openai.LengthFinishReasonError(completion=_completamento_troncato())])
+
+    esegui_nodo(riassuntore, conversazione(3), soglia=6)
+
+    [avviso] = record(caplog, logging.WARNING)
+    assert "output non valido" in avviso.getMessage()
+
+
+def test_errore_imprevisto_del_riassuntore_si_propaga():
+    riassuntore = RiassuntoreSimulato([RuntimeError("bug")])
+
+    with pytest.raises(RuntimeError):
+        esegui_nodo(riassuntore, conversazione(3), soglia=6)
+
+
+def test_errore_nella_trascrizione_si_propaga(monkeypatch):
+    def guasta(*_):
+        raise ValueError("trascrizione guasta")
+
+    monkeypatch.setattr(modulo_riassunto, "trascrivi_turni", guasta)
+    riassuntore = RiassuntoreSimulato([riassunto_ok("R")])
+
+    with pytest.raises(ValueError):
+        esegui_nodo(riassuntore, conversazione(3), soglia=6)
+    assert riassuntore.chiamate == []
+
+
+SEGRETO = "SEGRETO-7f3a"
+
+
+def messaggi_con_segreto() -> list:
+    turno_strumento = [
+        HumanMessage(f"domanda {SEGRETO}-domanda"),
+        AIMessage("", tool_calls=[chiamata("calcola", {"espressione": "1+1"}, "s1")]),
+        ToolMessage(f"risultato {SEGRETO}-strumento", tool_call_id="s1", name="calcola"),
+        AIMessage("fatto"),
+    ]
+    return con_id([*turno_strumento, *turno_semplice("d2", "r2"), *turno_semplice("d3", "r3"), HumanMessage("d4")])
+
+
+def _errore_del_server():
+    risposta = httpx.Response(500, json={"error": f"{SEGRETO}-server"}, request=_richiesta_http())
+    return openai.APIStatusError(f"errore {SEGRETO}-server", response=risposta, body={"error": f"{SEGRETO}-server"})
+
+
+CASI_LOG = [
+    pytest.param(lambda: [riassunto_ok(f"Obiettivo: {SEGRETO}-modello")], 6, id="compressione"),
+    pytest.param(lambda: [], 50, id="non-attivazione"),
+    pytest.param(lambda: [_errore_del_server()], 6, id="fail-open-errore"),
+    pytest.param(lambda: [riassunto_troncato(f"Obiettivo: {SEGRETO}-modello")], 6, id="fail-open-output"),
+]
+
+
+@pytest.mark.parametrize(("risposte", "soglia"), CASI_LOG)
+def test_log_senza_contenuti(caplog, risposte, soglia):
+    caplog.set_level(logging.DEBUG, logger=NOME_LOG)
+    riassuntore = RiassuntoreSimulato(risposte())
+
+    esegui_nodo(riassuntore, messaggi_con_segreto(), soglia=soglia, riassunto=f"Obiettivo: {SEGRETO}-precedente")
+
+    righe = record(caplog)
+    assert righe
+    assert all(SEGRETO not in r.getMessage() for r in righe)
