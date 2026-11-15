@@ -292,3 +292,70 @@ def test_costanti():
     assert modulo_riassunto.TURNI_CONSERVATI == 2
     assert modulo_riassunto.MAX_TOKENS_RIASSUNTO == 768
     assert modulo_riassunto.MAX_RISULTATO_TRASCRITTO == 1000
+
+
+# --- Client del riassuntore (Task 3, M6, M7) ---------------------------------------------------
+
+import functools
+import json
+
+import httpx
+from langchain_openai import ChatOpenAI
+
+from assistente import modello as modulo_modello
+from assistente.config import Config
+
+
+def _config():
+    return Config(base_url="http://localhost:1234/v1", modello="google/gemma-4-e2b", max_passaggi=6, ambito="Ambito.")
+
+
+def richieste_http(monkeypatch, contenuto="Obiettivo: nessuna", finish_reason="stop"):
+    """Client vero con trasporto HTTP simulato: registra i corpi delle richieste, nessuna rete."""
+    corpi = []
+
+    def gestore(request):
+        corpi.append(json.loads(request.content))
+        return httpx.Response(200, json={
+            "id": "x", "object": "chat.completion", "created": 0, "model": "m",
+            "choices": [{"index": 0, "finish_reason": finish_reason,
+                         "message": {"role": "assistant", "content": contenuto}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        })
+
+    cliente = httpx.Client(transport=httpx.MockTransport(gestore))
+    monkeypatch.setattr(modulo_modello, "ChatOpenAI", functools.partial(ChatOpenAI, http_client=cliente, max_retries=0))
+    return corpi
+
+
+def test_payload_del_riassuntore(monkeypatch):
+    corpi = richieste_http(monkeypatch)
+
+    modulo_modello.crea_riassuntore(_config()).invoke([HumanMessage("prompt del riassunto")])
+
+    [corpo] = corpi
+    assert corpo["temperature"] == 0
+    assert corpo["reasoning_effort"] == "none"
+    assert corpo["max_completion_tokens"] == 768  # M6
+    assert "max_tokens" not in corpo
+    assert "tools" not in corpo and "response_format" not in corpo
+    assert corpo["model"] == "google/gemma-4-e2b"
+    assert corpo["messages"] == [{"role": "user", "content": "prompt del riassunto"}]
+
+
+def test_finish_reason_length_arriva_nei_metadati(monkeypatch):
+    richieste_http(monkeypatch, contenuto="Obiettivo: tronc", finish_reason="length")
+
+    risposta = modulo_modello.crea_riassuntore(_config()).invoke([HumanMessage("p")])
+
+    assert isinstance(risposta, AIMessage)  # M7: nessuna eccezione
+    assert risposta.response_metadata["finish_reason"] == "length"
+
+
+def test_finish_reason_stop(monkeypatch):
+    richieste_http(monkeypatch, contenuto="Obiettivo: viaggio")
+
+    risposta = modulo_modello.crea_riassuntore(_config()).invoke([HumanMessage("p")])
+
+    assert risposta.response_metadata["finish_reason"] == "stop"
+    assert risposta.text == "Obiettivo: viaggio"
