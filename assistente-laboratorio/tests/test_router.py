@@ -486,3 +486,46 @@ def test_validation_error_fuori_dalla_chiamata_al_classificatore_non_viene_nasco
     with pytest.raises(pydantic.ValidationError):
         esegui_turno(grafo(modello, in_ambito()), [], "Che ore sono?", 6)
     assert modello.chiamate == []
+
+
+# --- Step 2: osservazioni del Revisore (contrassegno strutturale) ---
+
+TESTO_OSSERVAZIONE = "Osservazione del revisore (non è una nuova domanda dell'utente): manca il meteo"
+
+
+def osservazione(testo=TESTO_OSSERVAZIONE):
+    return HumanMessage(testo, additional_kwargs={"revisione": True})
+
+
+def test_osservazione_riconosciuta_solo_dal_contrassegno():
+    assert router.e_osservazione(osservazione())
+    assert not router.e_osservazione(HumanMessage(TESTO_OSSERVAZIONE))
+    assert not router.e_osservazione(HumanMessage("x", additional_kwargs={"revisione": "true"}))
+    assert not router.e_osservazione(HumanMessage("x", additional_kwargs={"revisione": False}))
+    assert not router.e_osservazione(AIMessage("x", additional_kwargs={"revisione": True}))
+
+
+def test_turni_precedenti_saltano_le_osservazioni():
+    messaggi = [HumanMessage("d1"), AIMessage("bozza"), osservazione(), AIMessage("finale"), HumanMessage("d2")]
+
+    assert turni_precedenti(messaggi) == [("d1", "finale")]
+
+
+def test_domanda_attuale_non_e_mai_un_osservazione():
+    precedenti = [HumanMessage("d0"), AIMessage("r0")]
+    messaggi = [*precedenti, HumanMessage("d"), AIMessage("bozza"), osservazione()]
+
+    assert componi_prompt(messaggi, AMBITO).endswith("DOMANDA ATTUALE:\nd")
+    assert turni_precedenti(messaggi) == turni_precedenti([*precedenti, HumanMessage("d")]) == [("d0", "r0")]
+
+
+def test_testo_dell_osservazione_digitato_dall_utente_e_una_domanda():
+    messaggi = [HumanMessage("d0"), AIMessage("r0"), HumanMessage(TESTO_OSSERVAZIONE)]
+
+    assert componi_prompt(messaggi, AMBITO).endswith("DOMANDA ATTUALE:\n" + TESTO_OSSERVAZIONE)
+    assert turni_precedenti(messaggi) == [("d0", "r0")]
+
+
+def test_testo_contesto_nessuno():
+    assert router.testo_contesto([HumanMessage("d")]) == "(nessuno)"
+    assert router.testo_contesto([HumanMessage("d0"), AIMessage("r0"), HumanMessage("d")]) == "Utente: d0\nAssistente: r0"
