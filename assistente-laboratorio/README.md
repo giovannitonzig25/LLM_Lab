@@ -23,9 +23,11 @@ Il server di LM Studio deve essere attivo. Copia il file di esempio (il file `.e
 
 ```powershell
 Copy-Item .env.example .env
-Get-Content .env | Where-Object { $_ -match '^\s*[^#\s]' } | ForEach-Object { $n, $v = $_ -split '=', 2; Set-Item -Path "env:$n" -Value $v }
+Get-Content .env -Encoding UTF8 | Where-Object { $_ -match '^\s*[^#\s]' } | ForEach-Object { $n, $v = $_ -split '=', 2; Set-Item -Path "env:$n" -Value $v }
 .\.venv\Scripts\python.exe prove_reali\verifica_modelli.py
 ```
+
+`-Encoding UTF8` serve in Windows PowerShell 5.1: senza, le lettere accentate di `.env` (per esempio in `AMBITO_AGENTE`) arrivano al programma alterate («attività» diventa «attivitÃ »).
 
 Lo script elenca gli identificativi restituiti da `GET /v1/models` ed esce con errore se `LM_STUDIO_MODEL` non è tra questi. Variabili:
 
@@ -33,6 +35,7 @@ Lo script elenca gli identificativi restituiti da `GET /v1/models` ed esce con e
 |---|---|
 | `LM_STUDIO_BASE_URL` | indirizzo del server, per esempio `http://localhost:1234/v1` (obbligatoria) |
 | `LM_STUDIO_MODEL` | identificativo del modello (obbligatoria) |
+| `AMBITO_AGENTE` | ambito dell'agente in una riga, al massimo 500 caratteri (obbligatoria): lo usa il Router per classificare le domande e compare nel messaggio di rifiuto. Chi aggiorna da una versione precedente deve aggiungere la riga al proprio `.env` (il valore di esempio è in `.env.example`), altrimenti il programma non parte |
 | `MAX_PASSAGGI` | limite di passaggi del grafo, predefinito 6 |
 | `MCP_URL` | indirizzo del server MCP delle note, predefinito `http://localhost:8001/mcp` |
 | `MCP_TIMEOUT` | secondi massimi per discovery e invocazione MCP (> 0), predefinito 10 |
@@ -154,9 +157,48 @@ INFO assistente.strumenti: strumento eseguito: nome=orologio risultato=2026-11-0
 
 Un fuso non valido o uno strumento inesistente non fanno cadere il programma: il modello riceve un risultato che inizia con `Errore:`.
 
+## Router di ambito
+
+Prima dell'agente un nodo **Router** chiede al modello di classificare la domanda:
+
+```
+START → router ─┬─ conversazione → modello ⇄ strumenti → END
+                └─ fuori_ambito  → rifiuto → END
+```
+
+- **Ambito:** viene solo da `AMBITO_AGENTE`. Nei casi ambigui il Router lascia passare la domanda (`conversazione`); rifiuta solo quelle chiaramente estranee.
+- **Domande di continuazione** («E domani?», «E a Trieste?»): il Router vede gli ultimi 2 turni (domanda e risposta finale, troncate a 300 e 500 caratteri, senza i risultati degli strumenti) e classifica solo la domanda attuale.
+- **Output strutturato:** client separato **senza strumenti**, `reasoning_effort="none"`, schema JSON (`categoria`, `motivo`) validato con Pydantic. Il client dell'agente non cambia.
+- **Rifiuto:** testo fisso, senza chiamare il modello né gli strumenti:
+  ```
+  Mi dispiace, questa richiesta è fuori dal mio ambito.
+  Ambito dell'assistente: «<AMBITO_AGENTE>»
+  ```
+  Domanda e rifiuto restano nella cronologia della sessione come un turno normale; categoria e motivo no.
+- **Errori:**
+  - output non valido (JSON errato, categoria sconosciuta, motivo vuoto, risposta vuota o troncata): la domanda passa all'agente (*fail-open*) con un `WARNING`;
+  - server non raggiungibile o timeout: stesso messaggio di errore di sempre, cronologia invariata.
+- **`MAX_PASSAGGI`** resta il margine dell'agente: il passaggio del Router è aggiunto a parte (`recursion_limit = MAX_PASSAGGI + 1`).
+
+**Il Router è un filtro di pertinenza, non un meccanismo di sicurezza.** Nessuna protezione dipende da lui: la cancellazione delle note resta protetta dalla conferma nel terminale.
+
+Nei log su stderr, per ogni turno:
+
+```
+INFO assistente.router: router: categoria=conversazione motivo=richiesta di orari e fusi orari durata=31.2s → agente
+INFO assistente.router: agente: chiamata al modello
+INFO assistente.router: router: categoria=fuori_ambito motivo=richiesta creativa durata=28.0s → rifiuto
+INFO assistente.router: rifiuto: risposta fissa, agente non eseguito
+WARNING assistente.router: router: classificazione non valida (ValidationError: campi categoria), inoltro all'agente durata=30.5s
+```
+
+Gli esempi mostrano il formato, non esiti misurati. L'assenza di `agente: chiamata al modello` in un turno rifiutato dimostra che l'agente non è stato eseguito. Nei log il motivo è troncato a 120 caratteri e non compaiono mai la domanda, il contesto né l'output grezzo del modello.
+
 ## Limite di passaggi
 
 `MAX_PASSAGGI` è il limite di passaggi del grafo (`recursion_limit` di LangGraph), non di richieste di strumento. Misurato con un modello simulato che chiede sempre lo strumento (LangGraph 1.2.19): con 6 il modello è chiamato 3 volte e lo strumento eseguito 3 volte prima dell'interruzione; con 2, una volta ciascuno. Il test `test_caratterizza_il_limite_di_passaggi` fissa questi valori e segnala se cambiano.
+
+Con il Router il limite effettivo è `MAX_PASSAGGI + 1`: i valori sopra restano gli stessi, perché il test di caratterizzazione gira sul grafo con il Router. Il rifiuto consuma 2 passaggi e funziona con `MAX_PASSAGGI` ≥ 2 (con 1 compare il messaggio del limite, come già per le risposte senza strumento).
 
 Quando il limite è raggiunto il turno viene scartato: la cronologia torna a com'era prima della domanda, compare un messaggio («La richiesta non è stata completata…») e la chat continua.
 
@@ -164,6 +206,7 @@ Quando il limite è raggiunto il turno viene scartato: la cronologia torna a com
 
 ```
 src/assistente/   config, modello (LM Studio), grafo (LangGraph), terminale
+                  router (Router di ambito: contesto, prompt, rifiuto)
                   strumenti (orologio e composizione), unita, calcolatrice
                   mcp_client, verifica_mcp (client MCP e controllo di salute)
                   server_mcp, note, meteo (server MCP)
@@ -175,6 +218,8 @@ docs/superpowers/ specifica e piano
 
 ## Limitazioni note
 
+- **Latenza del Router:** ogni domanda richiede una classificazione in più prima dell'agente. Nello spike del 2026-11-15 (`google/gemma-4-e2b`, questa macchina) ogni classificazione ha richiesto **26–46 s**. È accettata provvisoriamente come limite dell'ambiente locale, non come prestazione adeguata; i valori misurati nelle prove reali sono in `prove_reali/PROVE.md`.
+- **Motivo nei log:** è testo generato dal modello. Troncamento e istruzioni dello schema riducono il rischio che riporti parti della richiesta, ma non lo azzerano.
 - **Modello piccolo e sessioni lunghe:** con tutti gli 11 strumenti registrati, `google/gemma-4-e2b` a volte **non chiama lo strumento** e risponde a parole o dalla cronologia. In due sessioni di 22 domande è successo ogni volta sulle stesse 4 domande (catalogo, note, meteo), quindi in modo riproducibile; le stesse domande, in sessioni nuove, hanno scelto lo strumento giusto 12 volte su 12. Non è stato mai chiamato uno strumento sbagliato. Se la risposta sembra inventata o obsoleta (per esempio un elenco di note), riformula la domanda o riavvia l'agente. L'elenco delle note mostrato dal modello senza chiamata può non essere aggiornato. Vedi `prove_reali/PROVE.md`.
 - **Conferma di cancellazione:** una cancellazione non parte mai senza il tuo `s` nel terminale; se il modello non chiama `elimina_nota` non compare la domanda `[s/N]` e non viene cancellato nulla. Con input da pipe una domanda saltata disallinea le righe successive.
 - **Servizi e porte occupate:** se una porta pubblicata (8001 per `server-mcp`, 8000 per `servizi-http`) è già in uso dall'host, `docker compose run --rm assistente` fallisce perché Compose non avvia la dipendenza; usa `docker compose run --rm --no-deps assistente`. Provato per la porta 8001 e per la 8000.
