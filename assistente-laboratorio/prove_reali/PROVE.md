@@ -478,8 +478,9 @@ In locale il server MCP usava un **archivio SQLite temporaneo** (`NOTE_DB_PATH` 
 ### Falsi rifiuti sugli orari (osservazione importante)
 
 La stessa domanda «Che ore sono a Tokyo e che tempo fa a Roma?» con risposta **completa** è stata respinta **3 volte su 3** in locale:
-- motivo della sessione 1: l'orario di Tokyo «attuale o futuro»;
-- motivo delle sessioni 3 e 5: «informazioni specifiche e datate».
+- sessione 1 (`MAX_REVISIONI=1`): motivo «attuale o futuro» riferito all'orario di Tokyo, poi approvata dopo la correzione;
+- sessione con `MAX_REVISIONI=0` (sezione «Prove mirate»): motivo «informazioni specifiche e datate», risposta restituita con il `WARNING` di limite;
+- sessione 5 (`MAX_REVISIONI=1`): motivo «informazioni specifiche e datate», poi approvata dopo la correzione.
 
 In Docker la stessa domanda è stata approvata, con l'orario scritto per esteso invece che in formato `2026-11-16 00:02:48`. Il legame con il formato è un'**ipotesi non verificata**.
 
@@ -503,7 +504,11 @@ In Docker la stessa domanda è stata approvata, con l'orario scritto per esteso 
 | massimo | 57,8 s | 203,9 s (turno con correzione) |
 | mediana | 9,7 s | 99,3 s |
 
-Il turno da 902 s con l'errore 400 è escluso dai turni completi. Il Revisore è in genere più rapido del Router (mediana di quest'ultimo nelle stesse sessioni: circa 34 s). La latenza complessiva resta il limite principale dell'ambiente locale.
+Le sessioni sono sette: 1 e 5 in tabella; nella sezione «Prove mirate» le due delle note, quella con `MAX_REVISIONI=0` e quella con il servizio HTTP fermo; infine la sessione Docker. I giudizi contano tutte le righe `revisore:` con `durata=` di queste sessioni. I turni sono quelli conclusi con una risposta. Sono esclusi:
+- le righe `esci`;
+- le risposte `s`/`n` alla conferma;
+- le domande che hanno aperto la conferma;
+- il turno da 902 s con l'errore 400. Il Revisore è in genere più rapido del Router (mediana di quest'ultimo nelle stesse sessioni: circa 34 s). La latenza complessiva resta il limite principale dell'ambiente locale.
 
 ### Non verificati dal vivo
 

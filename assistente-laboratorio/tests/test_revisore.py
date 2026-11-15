@@ -737,3 +737,17 @@ def test_log_del_revisore_senza_dati_superflui(monkeypatch, caplog):
     motivi = [re.search(r"motivo=(.*) durata=", riga).group(1) for riga in log if "motivo=" in riga]
     assert any(m.startswith("MOTIVO-VISIBILE") for m in motivi)
     assert all(len(m) <= 120 for m in motivi)
+
+
+# --- Correzioni dopo la review finale ---
+
+
+def test_osservazione_digitata_dall_utente_resta_una_domanda():
+    # Focus 1: senza contrassegno il testo dell'osservazione è una domanda reale per contesto_agente e Revisore.
+    digitata = HumanMessage(modulo_revisore.testo_osservazione("scritto a mano"))
+    messaggi = [HumanMessage("d1"), AIMessage("r1"), digitata, AIMessage("r2"), HumanMessage("d3")]
+
+    assert contesto_agente(messaggi, 4) == messaggi
+    prompt = modulo_revisore.componi_prompt(messaggi[:4], inizio_turno=2)
+    assert "DOMANDA ATTUALE:\n" + digitata.text + "\n" in prompt
+    assert "Utente: d1\nAssistente: r1" in prompt

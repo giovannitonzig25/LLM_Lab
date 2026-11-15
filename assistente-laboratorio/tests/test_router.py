@@ -531,3 +531,17 @@ def test_testo_dell_osservazione_digitato_dall_utente_e_una_domanda():
 def test_testo_contesto_nessuno():
     assert router.testo_contesto([HumanMessage("d")]) == "(nessuno)"
     assert router.testo_contesto([HumanMessage("d0"), AIMessage("r0"), HumanMessage("d")]) == "Utente: d0\nAssistente: r0"
+
+
+def test_rifiuto_con_max_passaggi_1_e_zero_revisioni_si_completa():
+    # README («Limite di passaggi»): il rifiuto si completa con qualunque valore; il caso minimo è
+    # MAX_PASSAGGI=1 e MAX_REVISIONI=0, limite 1 + 1 × (1 + 1) = 3, e il rifiuto usa 2 passaggi.
+    modello = ModelloSimulato([])
+    grafo_zero = costruisci_grafo(
+        modello, STRUMENTI, classificatore=fuori_ambito(), ambito=AMBITO_TEST, revisore=approva_sempre(), max_revisioni=0
+    )
+
+    _, testo = esegui_turno(grafo_zero, [], "Scrivimi una poesia", 1, max_revisioni=0)
+
+    assert testo == router.testo_rifiuto(AMBITO_TEST)
+    assert modello.chiamate == []
