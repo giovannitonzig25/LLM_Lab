@@ -144,6 +144,7 @@ def test_main_scrive_gli_avvisi_su_stderr_e_continua(monkeypatch, capsys):
 
     monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
     monkeypatch.setenv("LM_STUDIO_MODEL", "m")
+    monkeypatch.setenv("AMBITO_AGENTE", "a")
     monkeypatch.setattr(
         terminale, "componi_strumenti", lambda config, chiedi_conferma=None: ([], ["AVVISO: server MCP assente"])
     )
@@ -193,6 +194,7 @@ def esegui_main_con_cancellazione(monkeypatch, tmp_path, risposta_conferma, argo
     with avvia_server_mcp(crea_server(ArchivioNote(percorso))) as url:
         monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
         monkeypatch.setenv("LM_STUDIO_MODEL", "m")
+        monkeypatch.setenv("AMBITO_AGENTE", "a")
         monkeypatch.setenv("MCP_URL", url)
         monkeypatch.setattr(
             terminale, "crea_modello",

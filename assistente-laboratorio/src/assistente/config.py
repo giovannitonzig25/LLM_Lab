@@ -10,6 +10,7 @@ MCP_TIMEOUT_PREDEFINITO = 10.0
 MCP_ATTESA_AVVIO_PREDEFINITA = 0.0
 SERVIZI_BASE_URL_PREDEFINITO = "http://localhost:8000"
 SERVIZI_TIMEOUT_PREDEFINITO = 10.0
+AMBITO_MAX_CARATTERI = 500
 
 
 class ErroreConfigurazione(Exception):
@@ -21,6 +22,7 @@ class Config:
     base_url: str
     modello: str
     max_passaggi: int
+    ambito: str
     mcp_url: str = MCP_URL_PREDEFINITO
     mcp_timeout: float = MCP_TIMEOUT_PREDEFINITO
     mcp_attesa_avvio: float = MCP_ATTESA_AVVIO_PREDEFINITA
@@ -61,10 +63,16 @@ def carica_config(env: Mapping[str, str] = os.environ) -> Config:
         max_passaggi = 0
     if max_passaggi < 1:
         raise ErroreConfigurazione(f"MAX_PASSAGGI deve essere un intero positivo, ricevuto: {grezzo!r}")
+    ambito = _obbligatoria(env, "AMBITO_AGENTE")
+    if len(ambito) > AMBITO_MAX_CARATTERI:
+        raise ErroreConfigurazione(
+            f"AMBITO_AGENTE deve avere al massimo {AMBITO_MAX_CARATTERI} caratteri, ricevuti: {len(ambito)}"
+        )
     return Config(
         base_url=base_url,
         modello=modello,
         max_passaggi=max_passaggi,
+        ambito=ambito,
         mcp_url=env.get("MCP_URL", "").strip() or MCP_URL_PREDEFINITO,
         mcp_timeout=_secondi(env, "MCP_TIMEOUT", MCP_TIMEOUT_PREDEFINITO, minimo_incluso=False),
         mcp_attesa_avvio=_secondi(env, "MCP_ATTESA_AVVIO", MCP_ATTESA_AVVIO_PREDEFINITA, minimo_incluso=True),

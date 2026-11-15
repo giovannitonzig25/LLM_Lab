@@ -58,7 +58,7 @@ from assistente.config import carica_config
 from assistente.mcp_client import ErroreMcp
 from assistente.strumenti import componi_strumenti
 
-_ENV = {"LM_STUDIO_BASE_URL": "http://localhost:1234/v1", "LM_STUDIO_MODEL": "m"}
+_ENV = {"LM_STUDIO_BASE_URL": "http://localhost:1234/v1", "LM_STUDIO_MODEL": "m", "AMBITO_AGENTE": "a"}
 
 
 @tool
