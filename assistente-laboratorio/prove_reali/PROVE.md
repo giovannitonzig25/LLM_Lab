@@ -336,3 +336,77 @@ Non provato: una sessione interattiva con TTY reale con incolla di caratteri spe
 Prova **interattiva con TTY** (`docker compose run --rm assistente`, immagine ricostruita, `server-mcp` e `servizi-http` attivi), eseguita **dall'utente**: Ctrl+C al prompt `Tu:`, Ctrl+C durante la risposta del modello e la variante facoltativa alla domanda `[s/N]` di `elimina_nota`, secondo la guida data. Esito riferito dall'utente: **«sono passate tutte»**. L'esito è quello riferito dall'utente, **non riletto da log** da me; non ho chiesto il dettaglio per singola prova né se sia rimasto qualche container `...assistente-run-...`.
 
 Il primo tentativo dell'utente (prima del ramo `fix/input-non-valido`) era invece caduto per un byte non valido nell'input, non per Ctrl+C: vedi la sezione di quel ramo.
+
+## Ramo `feat/router` — Step 1 Lezione 6: Router di ambito (2026-11-15)
+
+Prove reali con LM Studio (`google/gemma-4-e2b`) e Docker Desktop, **distinte dai test simulati** di `tests/test_router.py`. Le domande sono state passate da file o da uno script che pilota la chat; esiti riletti dai log su stderr. Le durate sono quelle registrate dal Router (`durata=`).
+
+### Locale, sessione da 11 domande (server MCP e servizio HTTP attivi)
+
+| # | Domanda | Router | Agente / strumenti | Esito |
+|---|---|---|---|---|
+| 1 | Che ore sono a Tokyo? | conversazione, 43,6 s | `orologio(Asia/Tokyo)` | OK |
+| 2 | Scrivimi una poesia sull'autunno | fuori_ambito, 35,4 s | nessuna riga `agente:` né `strumento richiesto` | OK, rifiuto |
+| 3 | Che tempo fa a Roma? | conversazione, 43,9 s | `meteo(Roma)` via MCP | OK |
+| 4 | E a Trieste? | conversazione («continuazione di una domanda precedente»), 48,6 s | `meteo(Trieste)` | OK, continuazione |
+| 5 | Che giorno è oggi? | conversazione, 36,2 s | nessuno strumento (vedi sotto) | Router OK |
+| 6 | E domani? | conversazione («continuazione di una richiesta temporale»), 46,3 s | nessuno strumento (vedi sotto) | Router OK |
+| 7 | Raccontami nel dettaglio la storia della Rivoluzione francese (dopo il meteo) | fuori_ambito, 36,5 s | nessuna riga `agente:` | OK, rifiuto |
+| 8 | Scrivimi una canzone sul mare | fuori_ambito, 6,9 s | nessuna riga `agente:` | OK, rifiuto |
+| 9 | Quanto fa 17 per 23 più 5? (dopo due rifiuti) | conversazione, 43,8 s | `calcola` → 396 | OK, non influenzato dai rifiuti |
+| 10 | Ciao, cosa sai fare? | conversazione, 46,3 s | risposta descrittiva | OK |
+| 11 | Quanto costa un corso? (ambigua) | conversazione, 48,7 s | chiede di quale corso si tratta | OK, tolleranza |
+
+Il rifiuto compare nel formato fisso, con «attività» e «unità» corretti.
+
+**Agente senza orologio (domande 5 e 6), limitazione già nota, non del Router.** L'agente ha risposto «Oggi è il 15 novembre 2026» e «Domani sarà il 16 novembre 2026» **senza chiamare `orologio`**, ricavando la data dalla risposta della domanda 1 presente in cronologia. Le date erano corrette, ma solo grazie a quella cronologia. È la limitazione del modello piccolo già documentata nel README («Limitazioni note»). Non è stata modificata in questo Step.
+
+### Conferma di `elimina_nota` attraverso il Router (nota temporanea)
+
+Sequenza: aggiunta della nota temporanea, richiesta di eliminarla con risposta `n`, elenco, nuova richiesta con risposta `s`. Ogni domanda è stata classificata `conversazione` (38,3–61,3 s).
+- Con `n`: `conferma dell'utente: … esito=no`, risultato `Errore: cancellazione non confermata dall'utente`; l'elenco successivo mostra ancora la nota.
+- Con `s`: `Nota 1 eliminata`; l'archivio è tornato vuoto, verificato con una lettura diretta di `data/note.db`.
+
+Esito: OK. In precedenza l'archivio non esisteva: il file vuoto è stato creato da una lettura di controllo, e il server crea la tabella al primo uso.
+
+### Server di LM Studio fermato e riavviato (`lms server stop` / `lms server start`)
+
+Uno script ha pilotato la chat. Prima «Che ore sono a Tokyo?» con il server attivo: Router 36,4 s, `orologio`. Poi `lms server stop` e «Scrivimi una poesia sulla neve»: in 13,6 s, dopo i 2 tentativi automatici dell'SDK `openai`, compare «Non riesco a ottenere una risposta dal server del modello (Connection error.)…»; nessuna riga del Router né `agente:`. Dopo `lms server start` il modello è di nuovo raggiungibile (`GET /v1/models`). Infine «E a Londra?»: classificata come continuazione (35,9 s), `orologio(Europe/London)`. Il turno fallito non è rimasto in cronologia.
+
+Esito: OK.
+
+### Accenti con il comando PowerShell del README
+
+`.env` caricato con `Get-Content .env -Encoding UTF8 | …`, poi «Scrivimi una poesia sul mare». Nel rifiuto «attività» arriva con il codice `E0`, cioè corretto. Senza `-Encoding UTF8` lo stesso valore diventa «attivitÃ » (verificato su una copia di `.env.example`).
+
+Esito: OK.
+
+### Docker Compose
+
+- `docker compose build`: OK.
+- `docker compose run --rm -T assistente` con «Che ore sono a Tokyo?» e «Scrivimi una poesia sull'autunno»:
+  - discovery da `server-mcp`;
+  - prima domanda: Router `conversazione` (33,2 s), `orologio(Asia/Tokyo)`;
+  - seconda domanda: Router `fuori_ambito` (38,0 s), rifiuto senza riga `agente:`, accenti corretti (`env_file` legge UTF-8).
+
+  Esito: OK.
+- `AMBITO_AGENTE` tolta temporaneamente da `.env`, poi `docker compose run --rm -T --no-deps assistente`: uscita con codice 1 e il messaggio «Variabile d'ambiente mancante o vuota: AMBITO_AGENTE». `.env` ripristinato e confrontato byte per byte con la copia. Esito: OK.
+- **Osservazione, non legata al Router.** Durante la sessione `docker compose ps` ha mostrato `server-mcp` come `unhealthy`: i controlli di salute superavano il limite di 8 s, pur con una discovery riuscita. Il comando del controllo (`verifica_mcp`) non importa moduli di questo ramo. Rieseguito a modello fermo, ha richiesto 4,3–4,6 s e il servizio è tornato `healthy`. Che la causa sia il carico della macchina durante l'elaborazione di LM Studio è un'ipotesi, non verificata. L'agente non ne risente, perché dipende da `server-mcp` con `service_started`.
+
+### Latenza del Router (19 classificazioni reali)
+
+Le 19 classificazioni sono: 11 della sessione locale, 4 della conferma, 2 della prova con il server fermato, 2 in Docker.
+
+| | Valore |
+|---|---|
+| minimo | 6,9 s |
+| massimo | 61,3 s |
+| mediana | 40,5 s |
+| media | 40,3 s |
+| senza il 6,9 s | 33,2–61,3 s, mediana 42,1 s |
+
+Il valore di 6,9 s (domanda 8) è arrivato subito dopo un altro rifiuto. La causa non è stata verificata. Lo spike aveva stimato 26–46 s; nelle prove reali la gamma è più ampia. La latenza resta accettata solo provvisoriamente: non è una prestazione adeguata per l'applicazione finale.
+
+### Non verificati dal vivo
+
+Fail-open per output non valido e timeout del Router: coperti solo dai test simulati, perché non si possono provocare in modo affidabile con il modello reale.

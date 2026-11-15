@@ -4,7 +4,7 @@ Progetto del corso «Deep Learning e LLM: costruire chatbot e agenti». La carte
 
 ## Struttura e comandi (da `assistente-laboratorio/`, PowerShell)
 
-- `src/assistente/`: `config`, `modello` (LM Studio), `grafo` (LangGraph), `terminale`; strumenti locali `strumenti` (orologio e composizione di tutti gli strumenti all'avvio), `unita` (`converti_unita`), `calcolatrice` (`calcola`); client MCP `mcp_client` (ponte sincrono con discovery e conferma per `destructiveHint`) e `verifica_mcp` (controllo di salute); server MCP `server_mcp`, `note` (SQLite), `meteo`; strumenti HTTP `strumenti_http` (wrapper `@tool`) e servizio FastAPI `servizi_http/` (`app`, `scadenze`, `catalogo`, `dati/*.json`).
+- `src/assistente/`: `config` (incluso `AMBITO_AGENTE`, obbligatoria), `modello` (LM Studio: agente e classificatore del Router), `grafo` (LangGraph: router → agente o rifiuto), `router` (Router di ambito: contesto, prompt, rifiuto fisso, fail-open), `terminale`; strumenti locali `strumenti` (orologio e composizione di tutti gli strumenti all'avvio), `unita` (`converti_unita`), `calcolatrice` (`calcola`); client MCP `mcp_client` (ponte sincrono con discovery e conferma per `destructiveHint`) e `verifica_mcp` (controllo di salute); server MCP `server_mcp`, `note` (SQLite), `meteo`; strumenti HTTP `strumenti_http` (wrapper `@tool`) e servizio FastAPI `servizi_http/` (`app`, `scadenze`, `catalogo`, `dati/*.json`).
 - `tests/`: test automatici senza rete né modello (server FastMCP reale su porta libera ammesso). `prove_reali/`: prove con LM Studio e Docker, a mano, con gli esiti in `PROVE.md`.
 - Dipendenze: `requirements.txt` (esecuzione) e `requirements-dev.txt` (aggiunge `pytest`), versioni fissate.
 - Test: `.\.venv\Scripts\python.exe -m pytest -v`.

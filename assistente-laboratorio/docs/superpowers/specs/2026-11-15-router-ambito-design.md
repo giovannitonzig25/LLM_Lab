@@ -1,6 +1,6 @@
 # Lezione 6, Step 1 — Router di ambito prima dell'agente: specifica
 
-Stato: **approvata dall'utente il 2026-11-15**, con tre precisazioni integrate: troncamento delle domande precedenti, domanda attuale non duplicata, dati minimi nei log. Letta da un revisore indipendente. Non committata. Nessun codice è stato scritto. Il piano verrà scritto solo dopo l'approvazione di questa specifica.
+Stato: **approvata dall'utente il 2026-11-15**, con tre precisazioni integrate: troncamento delle domande precedenti, domanda attuale non duplicata, dati minimi nei log. Letta da un revisore indipendente. Committata su `dev` (`46aff16`). **Emendata il 2026-11-15** con l'approvazione dell'utente: §8 e test 12 coprono anche la `pydantic.ValidationError` e la `openai.LengthFinishReasonError` sollevate dal classificatore (vedi le note in §8).
 Le decisioni marcate **[Utente]** sono state prese dall'utente nel brainstorming del 2026-11-15; quelle marcate **[Scelta mia]** sono scelte dell'assistente, da correggere in lettura.
 
 ## 1. Intenzione
@@ -106,10 +106,21 @@ START → router ─(categoria)─┬─ conversazione → modello ⇄ strumenti
 | Caso | Riconoscimento | Comportamento | Log |
 |---|---|---|---|
 | Errore del server (connessione, timeout, HTTP) | eccezione `openai.OpenAIError` (verificato: `OpenAIConnectionError` e `OpenAITimeoutError` escono dal classificatore come eccezioni, non come `parsing_error`) | **nessun fail-open**: l'eccezione sale e `esegui_turno` mostra il messaggio esistente «Non riesco a ottenere una risposta dal server…»; cronologia invariata; agente mai chiamato | invariato rispetto a oggi |
-| Output strutturato non valido | `parsing_error` non nullo o `parsed` nullo | **fail-open**: `categoria="conversazione"`, `motivo` che dichiara la classificazione fallita (per esempio `classificazione non riuscita: <tipo di errore>`); si prosegue verso l'agente | `WARNING` distinguibile da una classificazione riuscita, con il **tipo** di errore e un dettaglio diagnostico breve (per esempio il campo che non ha passato la validazione); **mai** l'output grezzo né il testo della domanda |
+| Output strutturato non valido | `pydantic.ValidationError` o `openai.LengthFinishReasonError` sollevate da `classificatore.invoke(...)` (intercettate **solo** attorno a quella chiamata), oppure `parsing_error` non nullo o `parsed` nullo | **fail-open**: `categoria="conversazione"`, `motivo` che dichiara la classificazione fallita (per esempio `classificazione non riuscita: <tipo di errore>`); si prosegue verso l'agente | `WARNING` distinguibile da una classificazione riuscita, con il **tipo** di errore e un dettaglio diagnostico breve (per esempio il campo che non ha passato la validazione); **mai** l'output grezzo né il testo della domanda |
 | Eccezione imprevista | qualsiasi altra eccezione | nessuna gestione dedicata: si comporta come oggi nel resto del grafo (diagnosticabile) | traceback standard |
 
 - **Nessun nuovo tentativo** di classificazione. [Utente]
+- **Emendamento del 2026-11-15** [Utente]. È stato verificato con il client reale e un trasporto HTTP simulato. Con uno schema Pydantic, `langchain-openai` passa la classe all'SDK `openai` (`chat.completions.parse`), che valida il JSON già dentro la chiamata al modello, prima del parser protetto da `include_raw=True`.
+  - Categoria fuori elenco, motivo vuoto e testo non JSON sollevano quindi `pydantic.ValidationError`, che non è un `openai.OpenAIError`.
+  - Solo il contenuto vuoto arriva come `parsing_error` (`ValueError`).
+  - Il nodo Router intercetta **esclusivamente** `pydantic.ValidationError` attorno a `classificatore.invoke(...)` e applica il fail-open.
+  - Nessun `except Exception`. Gestione di `OpenAIError` ed eccezioni impreviste invariata.
+  - Nel `WARNING` compaiono solo il tipo di errore e i nomi dei campi non validi, mai valori, output grezzo o testo della conversazione.
+- **Secondo emendamento del 2026-11-15** [Utente], con una **correzione**. Nel primo emendamento la «risposta troncata» era indicata tra i casi che sollevano `pydantic.ValidationError`. L'affermazione era **sbagliata**: lo script di prova non passava davvero `finish_reason="length"` alla risposta simulata.
+  - Il comportamento reale: con `finish_reason == "length"` l'SDK `openai` solleva `openai.LengthFinishReasonError` (`openai/lib/_parsing/_completions.py`) prima di qualsiasi parsing. È un `openai.OpenAIError`, quindi senza intervento verrebbe trattata come errore del server, con un messaggio fuorviante.
+  - Decisione: anche `openai.LengthFinishReasonError` è un fallimento della classificazione e va in **fail-open**. Si intercetta solo questa sottoclasse, solo attorno a `classificatore.invoke(...)`.
+  - Nel `WARNING` compare soltanto il tipo `LengthFinishReasonError`, senza contenuto né dettagli della risposta.
+  - Connessione, timeout e gli altri `OpenAIError` restano gestiti come prima. `ContentFilterFinishReasonError` non viene intercettata: LM Studio non produce `content_filter`.
 
 ## 9. Limite di passaggi [Utente]
 
@@ -181,7 +192,7 @@ Con classificatore e modello simulati (`tests/finti.py`). Ogni voce è un test o
 11. Dopo un turno in ambito la cronologia è identica a quella che si ottiene oggi.
 
 **Errori**
-12. Output non valido (`parsing_error`) → fail-open verso l'agente, `motivo` di fallimento, `WARNING` distinguibile; il log non contiene l'output grezzo né la domanda.
+12. Output non valido (`pydantic.ValidationError` o `openai.LengthFinishReasonError` dal classificatore, verificata anche con il client reale e un trasporto `httpx` simulato per i casi dell'emendamento §8; `parsing_error`/`parsed` nullo per il contenuto vuoto) → fail-open verso l'agente, `motivo` di fallimento, `WARNING` distinguibile; il log non contiene l'output grezzo né la domanda.
 13. Errore di connessione e timeout del classificatore (`openai.APIConnectionError`, `openai.APITimeoutError`) → `esegui_turno` restituisce il messaggio di errore del server, cronologia invariata, agente mai chiamato.
 14. Un'eccezione imprevista nel classificatore non viene nascosta (si propaga).
 

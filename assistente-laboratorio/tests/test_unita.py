@@ -113,7 +113,7 @@ def test_strumento_con_valore_testuale_non_solleva():
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from assistente.grafo import costruisci_grafo
-from finti import ModelloSimulato
+from finti import AMBITO_TEST, ModelloSimulato, in_ambito
 
 
 @pytest.mark.parametrize("valore, da, a, atteso", [
@@ -147,7 +147,7 @@ def test_il_grafo_riceve_l_errore_chiaro_e_prosegue():
     richiesta = {"name": "converti_unita", "args": {"valore": 10, "da": "km"}, "id": "x1", "type": "tool_call"}
     modello = ModelloSimulato([AIMessage("", tool_calls=[richiesta]), AIMessage("Riprovo")])
 
-    esito = costruisci_grafo(modello, [converti_unita]).invoke({"messages": [HumanMessage("converti")]})
+    esito = costruisci_grafo(modello, [converti_unita], classificatore=in_ambito(), ambito=AMBITO_TEST).invoke({"messages": [HumanMessage("converti")]})
 
     risposta = next(m for m in esito["messages"] if isinstance(m, ToolMessage))
     assert risposta.tool_call_id == "x1"

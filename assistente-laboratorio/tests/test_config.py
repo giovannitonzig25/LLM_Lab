@@ -2,16 +2,20 @@ import pytest
 
 from assistente.config import Config, ErroreConfigurazione, carica_config
 
-BASE = {"LM_STUDIO_BASE_URL": "http://localhost:1234/v1", "LM_STUDIO_MODEL": "google/gemma-4-e2b"}
+BASE = {
+    "LM_STUDIO_BASE_URL": "http://localhost:1234/v1",
+    "LM_STUDIO_MODEL": "google/gemma-4-e2b",
+    "AMBITO_AGENTE": "Ambito di prova.",
+}
 
 
 def test_config_valida():
     assert carica_config({**BASE, "MAX_PASSAGGI": "4"}) == Config(
-        base_url="http://localhost:1234/v1", modello="google/gemma-4-e2b", max_passaggi=4
+        base_url="http://localhost:1234/v1", modello="google/gemma-4-e2b", max_passaggi=4, ambito="Ambito di prova."
     )
 
 
-@pytest.mark.parametrize("variabile", ["LM_STUDIO_BASE_URL", "LM_STUDIO_MODEL"])
+@pytest.mark.parametrize("variabile", ["LM_STUDIO_BASE_URL", "LM_STUDIO_MODEL", "AMBITO_AGENTE"])
 def test_variabile_mancante_viene_nominata(variabile):
     env = {k: v for k, v in BASE.items() if k != variabile}
 
@@ -80,3 +84,25 @@ def test_variabili_servizi_predefiniti_e_valide():
 def test_servizi_timeout_non_valido(valore):
     with pytest.raises(ErroreConfigurazione, match="SERVIZI_TIMEOUT"):
         carica_config({**BASE, "SERVIZI_TIMEOUT": valore})
+
+
+@pytest.mark.parametrize("valore", ["", "   "])
+def test_ambito_vuoto_o_di_spazi_e_mancante(valore):
+    with pytest.raises(ErroreConfigurazione, match="AMBITO_AGENTE"):
+        carica_config({**BASE, "AMBITO_AGENTE": valore})
+
+
+def test_ambito_viene_ripulito_dagli_spazi():
+    assert carica_config({**BASE, "AMBITO_AGENTE": "  Ambito.  "}).ambito == "Ambito."
+
+
+def test_ambito_al_limite_e_valido():
+    assert carica_config({**BASE, "AMBITO_AGENTE": "a" * 500}).ambito == "a" * 500
+
+
+def test_ambito_troppo_lungo():
+    with pytest.raises(ErroreConfigurazione) as errore:
+        carica_config({**BASE, "AMBITO_AGENTE": "a" * 501})
+
+    messaggio = str(errore.value)
+    assert "AMBITO_AGENTE" in messaggio and "500" in messaggio and "501" in messaggio
