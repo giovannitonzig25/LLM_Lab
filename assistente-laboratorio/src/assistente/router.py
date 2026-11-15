@@ -1,10 +1,13 @@
 """Router di ambito: classifica la domanda attuale prima dell'agente (nessuno strumento)."""
-from collections.abc import Sequence
+import logging
+import time
+from collections.abc import Callable, Sequence
 from typing import Literal
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from pydantic import BaseModel, Field
 
+LOG = logging.getLogger("assistente.router")
 TURNI_CONTESTO = 2
 MAX_RISPOSTA_CONTESTO = 500
 MAX_DOMANDA_CONTESTO = 300
@@ -73,3 +76,21 @@ def componi_prompt(messaggi: Sequence[BaseMessage], ambito: str) -> str:
 
 def testo_rifiuto(ambito: str) -> str:
     return "Mi dispiace, questa richiesta è fuori dal mio ambito.\nAmbito dell'assistente: «" + ambito + "»"
+
+
+def crea_nodo_router(classificatore, ambito: str) -> Callable[[dict], dict]:
+    """Nodo che classifica la domanda attuale; scrive categoria e motivo nello stato, mai nei messaggi."""
+
+    def nodo_router(stato: dict) -> dict:
+        inizio = time.perf_counter()
+        esito = classificatore.invoke([HumanMessage(componi_prompt(stato["messages"], ambito))])
+        durata = time.perf_counter() - inizio
+        classificazione = esito["parsed"]
+        destinazione = "agente" if classificazione.categoria == "conversazione" else "rifiuto"
+        LOG.info(
+            "router: categoria=%s motivo=%s durata=%.1fs → %s",
+            classificazione.categoria, classificazione.motivo, durata, destinazione,
+        )
+        return {"categoria": classificazione.categoria, "motivo": classificazione.motivo}
+
+    return nodo_router

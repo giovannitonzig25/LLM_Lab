@@ -9,11 +9,13 @@ from langchain_core.messages import BaseMessage, HumanMessage
 
 from assistente.config import ErroreConfigurazione, carica_config
 from assistente.grafo import costruisci_grafo
-from assistente.modello import crea_modello
+from assistente.modello import crea_classificatore, crea_modello
 from assistente.strumenti import componi_strumenti
 
 LOG = logging.getLogger("assistente.terminale")
 USCITA = "esci"
+# Il Router consuma un passaggio all'inizio di ogni turno: MAX_PASSAGGI resta il margine dell'agente.
+PASSAGGI_ROUTER = 1
 MESSAGGIO_LIMITE = (
     "La richiesta non è stata completata: raggiunto il limite di {limite} passaggi. "
     "Puoi riprovare o riformulare la domanda."
@@ -41,7 +43,7 @@ def esegui_turno(grafo, cronologia: list[BaseMessage], domanda: str, max_passagg
     try:
         esito = grafo.invoke(
             {"messages": [*cronologia, HumanMessage(domanda)]},
-            config={"recursion_limit": max_passaggi},
+            config={"recursion_limit": max_passaggi + PASSAGGI_ROUTER},
         )
     except GraphRecursionError:
         LOG.warning("limite di passaggi raggiunto (%s): turno scartato", max_passaggi)
@@ -87,7 +89,10 @@ def main() -> int:
     strumenti, avvisi = componi_strumenti(config, chiedi_conferma=chiedi_conferma)
     for avviso in avvisi:
         print(avviso, file=sys.stderr)
-    esegui_chat(costruisci_grafo(crea_modello(config, strumenti), strumenti), config.max_passaggi, lambda: input("Tu: "), print)
+    grafo = costruisci_grafo(
+        crea_modello(config, strumenti), strumenti, classificatore=crea_classificatore(config), ambito=config.ambito
+    )
+    esegui_chat(grafo, config.max_passaggi, lambda: input("Tu: "), print)
     return 0
 
 

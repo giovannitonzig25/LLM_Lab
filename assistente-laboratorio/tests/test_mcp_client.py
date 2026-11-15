@@ -14,7 +14,7 @@ from assistente.grafo import costruisci_grafo
 from assistente.mcp_client import ErroreMcp, StrumentoMcp, scopri_strumenti
 from assistente.note import ArchivioNote
 from assistente.server_mcp import crea_server
-from finti import ModelloSimulato
+from finti import AMBITO_TEST, ModelloSimulato, in_ambito
 from meteo_finto import client_finto
 from server_reale import avvia_server_mcp, porta_chiusa, porta_muta
 
@@ -70,7 +70,7 @@ def test_due_turni_del_grafo_con_finto_modello(server):
         AIMessage("", tool_calls=[richiesta("aggiungi_nota", {"testo": "due"}, "call_2")]),
         AIMessage("Fatto due"),
     ])
-    grafo = costruisci_grafo(modello, scopri_strumenti(url))
+    grafo = costruisci_grafo(modello, scopri_strumenti(url), classificatore=in_ambito(), ambito=AMBITO_TEST)
 
     primo = grafo.invoke({"messages": [HumanMessage("annota uno")]})
     secondo = grafo.invoke({"messages": primo["messages"] + [HumanMessage("annota due")]})
@@ -95,7 +95,7 @@ def test_due_richieste_nello_stesso_messaggio(server):
         ]),
         AIMessage("Fatto"),
     ])
-    grafo = costruisci_grafo(modello, scopri_strumenti(url))
+    grafo = costruisci_grafo(modello, scopri_strumenti(url), classificatore=in_ambito(), ambito=AMBITO_TEST)
 
     esito = grafo.invoke({"messages": [HumanMessage("due note")]})
 
@@ -213,7 +213,7 @@ def test_modello_chiede_subito_la_cancellazione_con_conferma_true(server_con_not
         AIMessage("", tool_calls=[richiesta("elimina_nota", {"id": 1, "conferma": True}, "call_x")]),
         AIMessage("Non cancellata"),
     ])
-    grafo = costruisci_grafo(modello, scopri_strumenti(url, chiedi_conferma=conferma))
+    grafo = costruisci_grafo(modello, scopri_strumenti(url, chiedi_conferma=conferma), classificatore=in_ambito(), ambito=AMBITO_TEST)
 
     esito = grafo.invoke({"messages": [HumanMessage("cancella la nota 1")]})
 

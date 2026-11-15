@@ -4,7 +4,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from assistente.grafo import costruisci_grafo
 from assistente.terminale import esegui_chat, esegui_turno
-from finti import ModelloSimulato
+from finti import AMBITO_TEST, ModelloSimulato, in_ambito
 
 
 def esegui(grafo, righe):
@@ -33,7 +33,7 @@ class GrafoSpia:
 
 def grafo_con(*risposte):
     modello = ModelloSimulato([AIMessage(r) if isinstance(r, str) else r for r in risposte])
-    return costruisci_grafo(modello), modello
+    return costruisci_grafo(modello, classificatore=in_ambito(), ambito=AMBITO_TEST), modello
 
 
 def test_esci_termina_la_chat():
@@ -148,6 +148,7 @@ def test_main_scrive_gli_avvisi_su_stderr_e_continua(monkeypatch, capsys):
     monkeypatch.setattr(
         terminale, "componi_strumenti", lambda config, chiedi_conferma=None: ([], ["AVVISO: server MCP assente"])
     )
+    monkeypatch.setattr(terminale, "crea_classificatore", lambda config: in_ambito())
     monkeypatch.setattr(
         terminale, "crea_modello", lambda config, strumenti: ModelloSimulato([AIMessage("Ciao!")])
     )
@@ -196,6 +197,7 @@ def esegui_main_con_cancellazione(monkeypatch, tmp_path, risposta_conferma, argo
         monkeypatch.setenv("LM_STUDIO_MODEL", "m")
         monkeypatch.setenv("AMBITO_AGENTE", "a")
         monkeypatch.setenv("MCP_URL", url)
+        monkeypatch.setattr(terminale, "crea_classificatore", lambda config: in_ambito())
         monkeypatch.setattr(
             terminale, "crea_modello",
             lambda config, strumenti: ModelloSimulato([AIMessage("", tool_calls=[richiesta]), AIMessage("Fine")]),

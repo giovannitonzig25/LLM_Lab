@@ -152,3 +152,172 @@ def test_classificatore_si_costruisce_senza_rete():
     from assistente.modello import crea_classificatore
 
     assert callable(crea_classificatore(_config()).invoke)
+
+
+# --- Router nel grafo (Task 4) ---
+
+import logging
+
+import httpx
+import openai
+
+from assistente.grafo import costruisci_grafo
+from assistente.strumenti import STRUMENTI
+from assistente.terminale import esegui_turno
+from finti import AMBITO_TEST, ClassificatoreSimulato, ModelloSimulato, fuori_ambito, in_ambito
+
+
+def grafo(modello, classificatore):
+    return costruisci_grafo(modello, STRUMENTI, classificatore=classificatore, ambito=AMBITO_TEST)
+
+
+def righe(caplog, logger):
+    return [r.getMessage() for r in caplog.records if r.name == logger]
+
+
+def test_in_ambito_passa_all_agente(caplog):
+    modello = ModelloSimulato([AIMessage("Ok")])
+
+    with caplog.at_level(logging.INFO):
+        _, testo = esegui_turno(grafo(modello, in_ambito()), [], "Che ore sono?", 6)
+
+    assert testo == "Ok"
+    log = righe(caplog, "assistente.router")
+    assert "categoria=conversazione" in log[0] and "motivo=richiesta in ambito" in log[0]
+    assert "durata=" in log[0] and log[0].endswith("→ agente")
+    assert log[1] == "agente: chiamata al modello"
+
+
+def test_fuori_ambito_rifiuta_senza_agente_ne_strumenti(caplog):
+    modello = ModelloSimulato([AIMessage("non deve rispondere")])
+
+    with caplog.at_level(logging.INFO):
+        _, testo = esegui_turno(grafo(modello, fuori_ambito()), [], "Scrivimi una poesia", 6)
+
+    assert testo == router.testo_rifiuto(AMBITO_TEST)
+    assert modello.chiamate == []
+    log = righe(caplog, "assistente.router")
+    assert log[0].endswith("→ rifiuto") and "categoria=fuori_ambito" in log[0]
+    assert log[1] == "rifiuto: risposta fissa, agente non eseguito"
+    assert not any(r.startswith("agente:") for r in log)
+    assert not any("strumento richiesto" in r for r in righe(caplog, "assistente.strumenti"))
+
+
+def test_router_eseguito_una_volta_con_tool_calling(caplog):
+    classificatore = in_ambito()
+    modello = ModelloSimulato([CHIEDE_ORA, AIMessage("Sono le 10.")])
+
+    with caplog.at_level(logging.INFO):
+        _, testo = esegui_turno(grafo(modello, classificatore), [], "Che ore sono?", 6)
+
+    assert testo == "Sono le 10."
+    assert len(classificatore.chiamate) == 1
+    [messaggi] = classificatore.chiamate
+    assert len(messaggi) == 1 and isinstance(messaggi[0], HumanMessage)
+    assert len(modello.chiamate) == 2
+    assert any("strumento eseguito: nome=orologio" in r for r in righe(caplog, "assistente.strumenti"))
+
+
+def test_cronologia_dopo_il_rifiuto():
+    precedente = [HumanMessage("Ciao"), AIMessage("Salve")]
+
+    cronologia, _ = esegui_turno(grafo(ModelloSimulato([]), fuori_ambito()), precedente, "Scrivimi una poesia", 6)
+
+    assert cronologia[:2] == precedente
+    assert [type(m) for m in cronologia[2:]] == [HumanMessage, AIMessage]
+    assert cronologia[2].content == "Scrivimi una poesia"
+    rifiuto = cronologia[3]
+    assert rifiuto.content == router.testo_rifiuto(AMBITO_TEST)
+    assert rifiuto.additional_kwargs == {} and rifiuto.name is None
+    assert not any("richiesta estranea" in str(m.content) for m in cronologia)
+
+
+def test_cronologia_in_ambito_identica_a_prima():
+    precedente = [HumanMessage("Ciao"), AIMessage("Salve")]
+    modello = ModelloSimulato([CHIEDE_ORA, AIMessage("Sono le 10.")])
+
+    cronologia, _ = esegui_turno(grafo(modello, in_ambito()), precedente, "Che ore sono?", 6)
+
+    assert [type(m).__name__ for m in cronologia] == [
+        "HumanMessage", "AIMessage", "HumanMessage", "AIMessage", "ToolMessage", "AIMessage",
+    ]
+    assert cronologia[-1].content == "Sono le 10."
+    assert not any("richiesta in ambito" in str(m.content) for m in cronologia)
+
+
+METEO = [HumanMessage("Che tempo fa a Roma?"), AIMessage("A Roma 14 °C."), HumanMessage("E a Trieste?"), AIMessage("A Trieste 11 °C.")]
+
+
+def test_fuori_ambito_dopo_conversazione_pertinente():
+    classificatore = fuori_ambito()
+    modello = ModelloSimulato([])
+
+    _, testo = esegui_turno(grafo(modello, classificatore), METEO, "Raccontami la Rivoluzione francese", 6)
+
+    assert testo == router.testo_rifiuto(AMBITO_TEST)
+    assert modello.chiamate == []
+    prompt = classificatore.chiamate[0][0].content
+    assert "Utente: Che tempo fa a Roma?" in prompt and "Utente: E a Trieste?" in prompt
+
+
+def test_in_ambito_dopo_rifiuti():
+    cronologia, _ = esegui_turno(grafo(ModelloSimulato([]), fuori_ambito()), [], "Scrivimi una poesia", 6)
+    cronologia, _ = esegui_turno(grafo(ModelloSimulato([]), fuori_ambito()), cronologia, "E una canzone?", 6)
+    classificatore = in_ambito()
+    modello = ModelloSimulato([AIMessage("Sono le 10.")])
+
+    _, testo = esegui_turno(grafo(modello, classificatore), cronologia, "Che ore sono?", 6)
+
+    assert testo == "Sono le 10."
+    ricevuti = [m.content for m in modello.chiamate[0]]
+    assert ricevuti.count(router.testo_rifiuto(AMBITO_TEST)) == 2
+    prompt = classificatore.chiamate[0][0].content
+    assert "Utente: Scrivimi una poesia" in prompt and "Utente: E una canzone?" in prompt
+
+
+@pytest.mark.parametrize(
+    "errore",
+    [
+        openai.APIConnectionError(request=httpx.Request("POST", "http://x")),
+        openai.APITimeoutError(request=httpx.Request("POST", "http://x")),
+    ],
+)
+def test_errore_del_server_nel_router(errore):
+    precedente = [HumanMessage("Ciao"), AIMessage("Salve")]
+    modello = ModelloSimulato([AIMessage("non deve rispondere")])
+
+    cronologia, testo = esegui_turno(grafo(modello, ClassificatoreSimulato([errore])), precedente, "Che ore sono?", 6)
+
+    assert testo.startswith("Non riesco a ottenere una risposta dal server")
+    assert cronologia == precedente
+    assert modello.chiamate == []
+
+
+def test_rifiuto_con_max_passaggi_2():
+    modello = ModelloSimulato([])
+
+    _, testo = esegui_turno(grafo(modello, fuori_ambito()), [], "Scrivimi una poesia", 2)
+
+    assert testo == router.testo_rifiuto(AMBITO_TEST)
+    assert modello.chiamate == []
+
+
+def test_rifiuto_con_max_passaggi_1_fissa_il_limite():
+    precedente = [HumanMessage("Ciao"), AIMessage("Salve")]
+    modello = ModelloSimulato([])
+
+    cronologia, testo = esegui_turno(grafo(modello, fuori_ambito()), precedente, "Scrivimi una poesia", 1)
+
+    assert "non è stata completata" in testo
+    assert cronologia == precedente
+    assert modello.chiamate == []
+
+
+def test_limite_superato_con_router_conserva_la_cronologia():
+    precedente = [HumanMessage("Ciao"), AIMessage("Salve")]
+    modello = ModelloSimulato([CHIEDE_ORA], ripeti_ultima=True)
+
+    cronologia, testo = esegui_turno(grafo(modello, in_ambito()), precedente, "Che ore sono?", 6)
+
+    assert "non è stata completata" in testo
+    assert cronologia == precedente

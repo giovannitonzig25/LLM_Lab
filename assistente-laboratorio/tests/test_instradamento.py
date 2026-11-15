@@ -5,7 +5,7 @@ from langgraph.graph import END
 
 from assistente.grafo import costruisci_grafo, instrada
 from assistente.strumenti import STRUMENTI
-from finti import ModelloSimulato
+from finti import AMBITO_TEST, ModelloSimulato, in_ambito
 
 
 def richiesta(*chiamate):
@@ -17,7 +17,7 @@ def richiesta(*chiamate):
 
 
 def esegui(modello, domanda="Che ora è?"):
-    grafo = costruisci_grafo(modello, STRUMENTI)
+    grafo = costruisci_grafo(modello, STRUMENTI, classificatore=in_ambito(), ambito=AMBITO_TEST)
     return grafo.invoke({"messages": [HumanMessage(domanda)]})["messages"]
 
 

@@ -6,7 +6,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from assistente.grafo import costruisci_grafo
 from assistente.strumenti import STRUMENTI
 from assistente.terminale import esegui_chat, esegui_turno
-from finti import ModelloSimulato
+from finti import AMBITO_TEST, ModelloSimulato, in_ambito
 
 CHIEDE_ORA = AIMessage(content="", tool_calls=[{"id": "c1", "name": "orologio", "args": {}}])
 
@@ -22,7 +22,7 @@ class ModelloCondizionale:
 
 
 def grafo_in_loop():
-    return costruisci_grafo(ModelloCondizionale(), STRUMENTI)
+    return costruisci_grafo(ModelloCondizionale(), STRUMENTI, classificatore=in_ambito(), ambito=AMBITO_TEST)
 
 
 def test_limite_ripristina_la_cronologia():
@@ -72,7 +72,7 @@ def test_caratterizza_il_limite_di_passaggi(caplog, limite, chiamate_al_modello,
     modello = ModelloSimulato([CHIEDE_ORA], ripeti_ultima=True)
 
     with caplog.at_level(logging.INFO, logger="assistente.strumenti"):
-        esegui_turno(costruisci_grafo(modello, STRUMENTI), [], "Che ora è?", limite)
+        esegui_turno(costruisci_grafo(modello, STRUMENTI, classificatore=in_ambito(), ambito=AMBITO_TEST), [], "Che ora è?", limite)
 
     eseguiti = [r for r in caplog.records if "eseguito" in r.getMessage()]
     assert (len(modello.chiamate), len(eseguiti)) == (chiamate_al_modello, strumenti_eseguiti)
