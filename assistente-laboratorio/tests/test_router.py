@@ -121,3 +121,34 @@ def test_classificazione_rifiuta_valori_non_validi():
     with pytest.raises(pydantic.ValidationError):
         Classificazione(categoria="conversazione", motivo="")
     assert "senza ripetere" in Classificazione.model_fields["motivo"].description
+
+
+def _config():
+    from assistente.config import Config
+
+    return Config(base_url="http://localhost:1234/v1", modello="google/gemma-4-e2b", max_passaggi=6, ambito=AMBITO)
+
+
+def test_client_router_senza_ragionamento_e_senza_strumenti():
+    from langchain_openai import ChatOpenAI
+
+    from assistente.modello import crea_client_router
+
+    client = crea_client_router(_config())
+
+    assert type(client) is ChatOpenAI
+    assert client.reasoning_effort == "none"
+    assert client.temperature == 0
+    assert (client.model_name, client.openai_api_base) == ("google/gemma-4-e2b", "http://localhost:1234/v1")
+
+
+def test_client_agente_invariato():
+    from assistente.modello import crea_modello
+
+    assert crea_modello(_config()).reasoning_effort is None
+
+
+def test_classificatore_si_costruisce_senza_rete():
+    from assistente.modello import crea_classificatore
+
+    assert callable(crea_classificatore(_config()).invoke)
