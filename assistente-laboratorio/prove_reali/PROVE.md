@@ -515,3 +515,27 @@ Le sessioni sono sette: 1 e 5 in tabella; nella sezione «Prove mirate» le due 
 - Revisore non raggiungibile e giudizio non valido (fail-open): non provocabili in modo affidabile solo per il Revisore, coperti dai test simulati.
 - Correzione dopo una risposta davvero parziale (vedi sopra).
 - Duplicazione di una nota durante una correzione: non osservata, perché nessuna correzione ha coinvolto `aggiungi_nota`.
+
+## Ramo `feat/riassunto` — Step 3 Lezione 6: Riassunto della cronologia
+
+Prove reali con LM Studio (`google/gemma-4-e2b`) e Docker Desktop, **distinte dai test simulati** di `tests/test_riassunto.py`, con `SOGLIA_RIASSUNTO=6`. Conversazioni nuove e in ambito. Per ogni prova si registrano: domanda o sequenza, log «prima → dopo» di `assistente.riassunto`, esito di Router, agente e Revisore, latenze, token del server quando disponibili (solo diagnostica). In locale il server MCP usa un archivio SQLite temporaneo (`NOTE_DB_PATH`); hash di `data/note.db` prima e dopo.
+
+Esiti da compilare con il Task 9 del piano: nessun esito è ancora registrato.
+
+### 1. Nome al primo turno, usato dopo la compressione
+
+### 2. Sotto la soglia nessuna chiamata al riassuntore
+
+### 3. Continuazione riferita a un'informazione presente solo nel riassunto
+
+### 4. Contraddizione: valore cambiato in un turno recente
+
+### 5. Due compressioni successive
+
+### 6. Elenco lungo di note (osservazione)
+
+### 7. Risultato storico legato a una decisione superata (osservazione)
+
+### 8. Docker Compose, senza strumenti delle note
+
+### Non verificati dal vivo
