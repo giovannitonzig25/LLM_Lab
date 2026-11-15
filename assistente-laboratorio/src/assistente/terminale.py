@@ -2,6 +2,7 @@
 import logging
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import openai
 from langgraph.errors import GraphRecursionError
@@ -46,22 +47,33 @@ def limite_ricorsione(max_passaggi: int, max_revisioni: int) -> int:
     return PASSAGGI_RIASSUNTO + PASSAGGI_ROUTER + (max_revisioni + 1) * (max_passaggi + PASSAGGI_REVISORE)
 
 
+@dataclass(frozen=True)
+class Sessione:
+    """Cronologia e riassunto della sessione in corso (spec Step 3 §5.2): immutabile, mai salvata su disco."""
+
+    messaggi: tuple[BaseMessage, ...] = ()
+    riassunto: str = ""
+
+
 def esegui_turno(
-    grafo, cronologia: list[BaseMessage], domanda: str, max_passaggi: int, *, max_revisioni: int
-) -> tuple[list[BaseMessage], str]:
-    """Esegue un turno. Se fallisce restituisce la cronologia ricevuta, invariata."""
+    grafo, sessione: Sessione, domanda: str, max_passaggi: int, *, max_revisioni: int
+) -> tuple[Sessione, str]:
+    """Esegue un turno. Se fallisce restituisce la sessione ricevuta, lo stesso oggetto (spec Step 3 §5.3)."""
     try:
         esito = grafo.invoke(
-            {"messages": [*cronologia, HumanMessage(domanda)]},
+            # Copie: add_messages assegna gli id sugli oggetti ricevuti; la sessione non va mai toccata (§5.3).
+            {"messages": [*(m.model_copy() for m in sessione.messaggi), HumanMessage(domanda)], "riassunto": sessione.riassunto},
             config={"recursion_limit": limite_ricorsione(max_passaggi, max_revisioni)},
         )
     except GraphRecursionError:
         LOG.warning("limite di passaggi raggiunto (%s): turno scartato", max_passaggi)
-        return cronologia, MESSAGGIO_LIMITE.format(limite=max_passaggi)
+        return sessione, MESSAGGIO_LIMITE.format(limite=max_passaggi)
     except openai.OpenAIError as errore:
-        return cronologia, ERRORE_SERVER.format(errore=errore)
+        return sessione, ERRORE_SERVER.format(errore=errore)
+    # La cronologia può essere più corta di quella ricevuta: il Riassunto toglie i turni vecchi.
+    nuova = Sessione(tuple(esito["messages"]), esito.get("riassunto", sessione.riassunto))
     risposta = esito["messages"][-1].text
-    return esito["messages"], risposta if risposta.strip() else AVVISO_RISPOSTA_VUOTA
+    return nuova, risposta if risposta.strip() else AVVISO_RISPOSTA_VUOTA
 
 
 def ripulisci_input(testo: str) -> str:
@@ -77,7 +89,7 @@ def ripulisci_input(testo: str) -> str:
 def esegui_chat(
     grafo, max_passaggi: int, leggi: Callable[[], str], scrivi: Callable[[str], None], *, max_revisioni: int
 ) -> None:
-    cronologia: list[BaseMessage] = []
+    sessione = Sessione()  # nessuna persistenza tra esecuzioni
     while True:
         try:
             domanda = ripulisci_input(leggi()).strip()
@@ -85,7 +97,7 @@ def esegui_chat(
                 return
             if not domanda:
                 continue
-            cronologia, testo = esegui_turno(grafo, cronologia, domanda, max_passaggi, max_revisioni=max_revisioni)
+            sessione, testo = esegui_turno(grafo, sessione, domanda, max_passaggi, max_revisioni=max_revisioni)
         except (EOFError, KeyboardInterrupt):
             return
         scrivi(testo)

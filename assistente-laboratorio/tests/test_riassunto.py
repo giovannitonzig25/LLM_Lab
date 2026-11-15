@@ -690,3 +690,240 @@ def test_grafo_fail_open_prosegue_verso_l_agente(caplog):
     assert len(esito["messages"]) == 10
     assert esito["riassunto"] == "R0"
     assert len(record(caplog, logging.WARNING)) == 1
+
+
+# --- Sessione e atomicità del turno (Task 6) --------------------------------------------------------
+
+import dataclasses
+
+from finti import ClassificatoreSimulato
+
+from assistente.terminale import Sessione, esegui_chat, esegui_turno
+
+IN_CICLO = AIMessage("", tool_calls=[chiamata("inesistente", {}, "l1")])  # il modello chiede strumenti all'infinito
+
+
+def tre_turni() -> tuple:
+    """Sessione costruita a mano: 3 turni completi, messaggi senza id."""
+    return tuple(senza_id(3)[:-1])
+
+
+def turno_con(sessione, domanda="domanda nuova", *, riassuntore, soglia, modello=None, classificatore=None):
+    grafo, modello, classificatore = grafo_con_riassunto(riassuntore, soglia, modello, classificatore)
+    nuova, testo = esegui_turno(grafo, sessione, domanda, 6, max_revisioni=1)
+    return nuova, testo, modello, classificatore
+
+
+def fotografia(sessione) -> list:
+    return [(type(m), m.content, m.id) for m in sessione.messaggi]
+
+
+def test_sessione_immutabile():
+    sessione = Sessione()
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        sessione.riassunto = "x"
+    assert sessione.messaggi == () and isinstance(sessione.messaggi, tuple)
+    assert sessione.riassunto == ""
+
+
+def test_turno_riuscito_non_modifica_la_sessione_senza_id():
+    sessione = Sessione(tre_turni())
+    prima = fotografia(sessione)
+
+    nuova, testo, _, _ = turno_con(sessione, riassuntore=RiassuntoreSimulato([riassunto_ok("R")]), soglia=4)
+
+    assert testo == "risposta dell'agente" and nuova.riassunto == "R"  # il turno ha compresso
+    assert fotografia(sessione) == prima
+    assert all(m.id is None for m in sessione.messaggi)
+    assert sessione.riassunto == ""
+
+
+def test_turno_fallito_non_modifica_la_sessione_senza_id():
+    sessione = Sessione(tre_turni())
+    prima = fotografia(sessione)
+
+    nuova, testo, _, _ = turno_con(
+        sessione, riassuntore=RiassuntoreSimulato([riassunto_ok("R")]), soglia=4,
+        modello=ModelloSimulato([IN_CICLO], ripeti_ultima=True),
+    )
+
+    assert "non è stata completata" in testo
+    assert nuova is sessione
+    assert fotografia(sessione) == prima
+    assert all(m.id is None for m in sessione.messaggi)
+
+
+def test_sessione_reale_dopo_compressione():
+    # Test di regressione (spec §5.3, correzione D1): non può fallire senza copie.
+    riassuntore = RiassuntoreSimulato([riassunto_ok("R")])
+    grafo, _, _ = grafo_con_riassunto(riassuntore, soglia=6, modello=ModelloSimulato([AIMessage("r")], ripeti_ultima=True))
+    sessione = Sessione()
+    for numero in range(1, 4):
+        sessione, _ = esegui_turno(grafo, sessione, f"d{numero}", 6, max_revisioni=1)
+    prima = fotografia(sessione)
+
+    quarta, _ = esegui_turno(grafo, sessione, "d4", 6, max_revisioni=1)
+
+    assert len(riassuntore.chiamate) == 1 and quarta.riassunto == "R" and len(quarta.messaggi) == 6
+    assert fotografia(sessione) == prima and len(sessione.messaggi) == 6
+    assert sessione.riassunto == ""
+
+
+def test_compressione_poi_limite_di_passaggi():
+    sessione = Sessione(tre_turni())
+    riassuntore = RiassuntoreSimulato([riassunto_ok("R")])
+
+    nuova, testo, _, _ = turno_con(
+        sessione, riassuntore=riassuntore, soglia=4, modello=ModelloSimulato([IN_CICLO], ripeti_ultima=True)
+    )
+
+    assert len(riassuntore.chiamate) == 1
+    assert "non è stata completata" in testo
+    assert nuova is sessione and nuova.riassunto == "" and len(nuova.messaggi) == 6
+
+
+def test_compressione_poi_errore_del_server():
+    sessione = Sessione(tre_turni())
+    riassuntore = RiassuntoreSimulato([riassunto_ok("R")])
+
+    nuova, testo, _, _ = turno_con(
+        sessione, riassuntore=riassuntore, soglia=4,
+        modello=ModelloSimulato([openai.APIConnectionError(request=_richiesta_http())]),
+    )
+
+    assert len(riassuntore.chiamate) == 1
+    assert "/v1/models" in testo
+    assert nuova is sessione and nuova.riassunto == "" and len(nuova.messaggi) == 6
+
+
+def test_compressione_poi_errore_del_router():
+    sessione = Sessione(tre_turni())
+    riassuntore = RiassuntoreSimulato([riassunto_ok("R")])
+
+    nuova, testo, modello, _ = turno_con(
+        sessione, riassuntore=riassuntore, soglia=4,
+        classificatore=ClassificatoreSimulato([openai.APIConnectionError(request=_richiesta_http())]),
+    )
+
+    assert len(riassuntore.chiamate) == 1 and modello.chiamate == []
+    assert "/v1/models" in testo
+    assert nuova is sessione and nuova.riassunto == "" and len(nuova.messaggi) == 6
+
+
+def test_compressione_ripetuta_dopo_turno_fallito():
+    riassuntore = RiassuntoreSimulato([riassunto_ok("R1"), riassunto_ok("R2")])
+    modello = ModelloSimulato([openai.APIConnectionError(request=_richiesta_http()), AIMessage("ok")])
+    grafo, _, _ = grafo_con_riassunto(riassuntore, soglia=4, modello=modello)
+    sessione = Sessione(tre_turni())
+
+    dopo_errore, _ = esegui_turno(grafo, sessione, "d4", 6, max_revisioni=1)
+    finale, testo = esegui_turno(grafo, dopo_errore, "d4", 6, max_revisioni=1)
+
+    assert dopo_errore is sessione
+    assert testo == "ok"
+    assert len(riassuntore.chiamate) == 2
+    assert finale.riassunto == "R2"
+    assert [m.content for m in finale.messaggi] == ["domanda 2", "risposta 2", "domanda 3", "risposta 3", "d4", "ok"]
+
+
+class GrafoSpia:
+    """Inoltra al grafo vero e registra gli esiti, per osservare la sessione dentro esegui_chat."""
+
+    def __init__(self, grafo):
+        self._grafo = grafo
+        self.esiti = []
+
+    def invoke(self, *args, **kwargs):
+        esito = self._grafo.invoke(*args, **kwargs)
+        self.esiti.append(esito)
+        return esito
+
+
+def chat(grafo, domande):
+    righe = iter([*domande, "esci"])
+    stampato = []
+    esegui_chat(grafo, 6, lambda: next(righe), stampato.append, max_revisioni=1)
+    return stampato
+
+
+def test_seconda_compressione_usa_il_riassunto_precedente():
+    riassuntore = RiassuntoreSimulato([riassunto_ok("RIASSUNTO-1"), riassunto_ok("RIASSUNTO-2")])
+    grafo, _, _ = grafo_con_riassunto(riassuntore, soglia=8, modello=ModelloSimulato([AIMessage("r")], ripeti_ultima=True))
+    spia = GrafoSpia(grafo)
+
+    chat(spia, [f"d{n}" for n in range(1, 8)])
+
+    assert len(riassuntore.chiamate) == 2
+    assert "<riassunto_precedente>\n(nessuno)\n</riassunto_precedente>" in prompt_inviato(riassuntore, 0)
+    assert "<riassunto_precedente>\nRIASSUNTO-1\n</riassunto_precedente>" in prompt_inviato(riassuntore, 1)
+    assert [e.get("riassunto", "") for e in spia.esiti] == [""] * 4 + ["RIASSUNTO-1"] * 2 + ["RIASSUNTO-2"]
+
+
+def test_chat_usa_la_sessione_accorciata():
+    riassuntore = RiassuntoreSimulato([riassunto_ok("R")], ripeti_ultima=True)
+    modello = ModelloSimulato([AIMessage("r")], ripeti_ultima=True)
+    grafo, _, _ = grafo_con_riassunto(riassuntore, soglia=6, modello=modello)
+
+    chat(grafo, ["d1", "d2", "d3", "d4", "d5"])
+
+    assert len(riassuntore.chiamate) == 2
+    assert [m.content for m in modello.chiamate[-1]] == ["d3", "r", "d4", "r", "d5"]
+
+
+def test_fail_open_nel_turno(caplog):
+    caplog.set_level(logging.INFO, logger=NOME_LOG)
+    sessione = Sessione(tre_turni(), "R0")
+    riassuntore = RiassuntoreSimulato([openai.APIConnectionError(request=_richiesta_http())])
+
+    nuova, testo, _, _ = turno_con(sessione, riassuntore=riassuntore, soglia=4)
+
+    assert testo == "risposta dell'agente"
+    assert [m.content for m in nuova.messaggi] == [m.content for m in sessione.messaggi] + ["domanda nuova", testo]
+    assert nuova.riassunto == "R0"
+    assert len(record(caplog, logging.WARNING)) == 1
+
+
+def assert_tool_calls_integre(messaggi):
+    richieste = {}
+    for indice, messaggio in enumerate(messaggi):
+        if isinstance(messaggio, AIMessage) and messaggio.tool_calls:
+            seguenti = [m.tool_call_id for m in messaggi[indice + 1: indice + 1 + len(messaggio.tool_calls)]
+                        if isinstance(m, ToolMessage)]
+            assert seguenti == [c["id"] for c in messaggio.tool_calls]
+            richieste.update({c["id"]: indice for c in messaggio.tool_calls})
+    orfani = [m for m in messaggi if isinstance(m, ToolMessage) and m.tool_call_id not in richieste]
+    assert orfani == []
+
+
+def test_tool_calls_integre_dopo_la_compressione():
+    risposte = []
+    for numero in range(1, 7):
+        risposte += [AIMessage("", tool_calls=[chiamata("inesistente", {"n": numero}, f"c{numero}")]), AIMessage(f"r{numero}")]
+    riassuntore = RiassuntoreSimulato([riassunto_ok("R")], ripeti_ultima=True)
+    grafo, _, _ = grafo_con_riassunto(riassuntore, soglia=6, modello=ModelloSimulato(risposte))
+    sessione = Sessione()
+
+    for numero in range(1, 7):
+        sessione, _ = esegui_turno(grafo, sessione, f"d{numero}", 6, max_revisioni=1)
+        assert_tool_calls_integre(sessione.messaggi)
+
+    assert riassuntore.chiamate  # c'è stata almeno una compressione
+    # 2 turni conservati più il turno appena concluso, ciascuno di 4 messaggi.
+    assert modulo_riassunto.inizi_turni(sessione.messaggi) == [0, 4, 8]
+
+
+def test_chiamate_al_riassuntore_distinte():
+    riassuntore = RiassuntoreSimulato([])
+    revisore = approva_sempre()
+    modello = ModelloSimulato([AIMessage("r")])
+    classificatore = in_ambito()
+    grafo = costruisci_grafo(
+        modello, classificatore=classificatore, ambito=AMBITO_TEST, revisore=revisore, max_revisioni=1,
+        riassuntore=riassuntore, soglia_riassunto=20,
+    )
+
+    esegui_turno(grafo, Sessione(tre_turni()), "d4", 6, max_revisioni=1)
+
+    assert riassuntore.chiamate == []
+    assert (len(classificatore.chiamate), len(modello.chiamate), len(revisore.chiamate)) == (1, 1, 1)
