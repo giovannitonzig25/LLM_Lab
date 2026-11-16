@@ -295,3 +295,96 @@ def test_percorso_da_variabile():
 
 def test_esempio_versionato_valido():
     assert json.loads((RADICE / "preferenze.example.json").read_text(encoding="utf-8")) == ESEMPIO
+
+
+# --- Step 5: prompt MCP (spec 2026-11-16-prompt-mcp-design.md §5, Appendice A) ---
+
+SPECIFICA_PROMPT = RADICE / "docs" / "superpowers" / "specs" / "2026-11-16-prompt-mcp-design.md"
+GUIDE_LIVELLO = {
+    "base": "Usa un linguaggio semplice, senza dare per scontate conoscenze precedenti, e aggiungi un esempio concreto.",
+    "intermedio": "Presenta i concetti principali e la terminologia corretta, dando per scontate le basi.",
+    "avanzato": "Entra nei dettagli tecnici, nei compromessi e nei casi limite.",
+}
+
+
+def appendice_a(intestazione: str) -> str:
+    """Primo blocco ```text dopo l'intestazione, letto dalla specifica dello Step 5."""
+    testo = SPECIFICA_PROMPT.read_text(encoding="utf-8")
+    dopo = testo[testo.index(intestazione):]
+    inizio = dopo.index("```text\n") + len("```text\n")
+    return dopo[inizio: dopo.index("\n```", inizio)]
+
+
+def con_client(server, azione):
+    async def esegui():
+        async with Client(server) as client:
+            return await azione(client)
+
+    return asyncio.run(esegui())
+
+
+def test_prompt_elencati_con_descrizioni_e_argomenti(tmp_path):
+    _, server = crea(tmp_path)
+
+    prompt = {p.name: p for p in con_client(server, lambda c: c.list_prompts())}
+
+    assert prompt["spiega"].description == (
+        "Spiega un argomento al livello scelto: base, intermedio o avanzato (predefinito base)."
+    )
+    assert prompt["riassumi_conversazione"].description == (
+        "Riassume la conversazione della sessione in corso nello stile indicato, testo libero (predefinito breve)."
+    )
+    assert [(a.name, a.required) for a in prompt["spiega"].arguments] == [("argomento", True), ("livello", False)]
+    assert [(a.name, a.required) for a in prompt["riassumi_conversazione"].arguments] == [("stile", False)]
+
+
+@pytest.mark.parametrize("livello", ["base", "intermedio", "avanzato"])
+def test_spiega_per_livello(tmp_path, livello):
+    _, server = crea(tmp_path)
+
+    risultato = con_client(
+        server, lambda c: c.get_prompt("spiega", {"argomento": "Model Context Protocol", "livello": livello})
+    )
+
+    atteso = appendice_a("### A.1").format(
+        argomento="Model Context Protocol", livello=livello, guida_livello=GUIDE_LIVELLO[livello]
+    )
+    assert [(m.role, m.content.text) for m in risultato.messages] == [("user", atteso)]
+
+
+def test_spiega_senza_livello_usa_base(tmp_path):
+    _, server = crea(tmp_path)
+
+    risultato = con_client(server, lambda c: c.get_prompt("spiega", {"argomento": "MCP"}))
+
+    atteso = appendice_a("### A.1").format(argomento="MCP", livello="base", guida_livello=GUIDE_LIVELLO["base"])
+    assert [(m.role, m.content.text) for m in risultato.messages] == [("user", atteso)]
+
+
+@pytest.mark.parametrize("livello", ["esperto", "Base"])
+def test_spiega_livello_non_ammesso(tmp_path, livello):
+    _, server = crea(tmp_path)
+
+    with pytest.raises(Exception) as errore:
+        con_client(server, lambda c: c.get_prompt("spiega", {"argomento": "x", "livello": livello}))
+
+    assert f"livello non valido: {livello}" in str(errore.value)
+    assert "valori ammessi: base, intermedio, avanzato" in str(errore.value)
+
+
+@pytest.mark.parametrize("argomenti, stile", [({"stile": "elenco puntato"}, "elenco puntato"), ({}, "breve")])
+def test_riassumi_conversazione(tmp_path, argomenti, stile):
+    _, server = crea(tmp_path)
+
+    risultato = con_client(server, lambda c: c.get_prompt("riassumi_conversazione", argomenti))
+
+    atteso = appendice_a("### A.2").format(stile=stile)
+    assert [(m.role, m.content.text) for m in risultato.messages] == [("user", atteso)]
+
+
+def test_prompt_non_tra_gli_strumenti(tmp_path):
+    _, server = crea(tmp_path)
+
+    nomi = {t.name for t in con_client(server, lambda c: c.list_tools())}
+
+    assert "spiega" not in nomi and "riassumi_conversazione" not in nomi
