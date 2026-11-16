@@ -699,7 +699,8 @@ import dataclasses
 
 from finti import ClassificatoreSimulato
 
-from assistente.terminale import Sessione, esegui_chat, esegui_turno
+from assistente.agente import Sessione, esegui_turno
+from cli_su_api import chat_su_grafo
 
 IN_CICLO = AIMessage("", tool_calls=[chiamata("inesistente", {}, "l1")])  # il modello chiede strumenti all'infinito
 
@@ -844,7 +845,7 @@ class GrafoSpia:
 def chat(grafo, domande):
     righe = iter([*domande, "esci"])
     stampato = []
-    esegui_chat(grafo, 6, lambda: next(righe), stampato.append, max_revisioni=1)
+    chat_su_grafo(grafo, lambda: next(righe), stampato.append)
     return stampato
 
 

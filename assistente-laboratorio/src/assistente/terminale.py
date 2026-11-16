@@ -1,37 +1,27 @@
-"""Interfaccia da terminale: ciclo domanda/risposta."""
+"""Interfaccia da terminale: client dell'API dell'agente (Step 6, spec §3).
+
+La CLI conserva la `Sessione` (cronologia e riassunto, mai su disco) e la manda all'agente a ogni turno;
+il grafo gira solo nel servizio dell'agente.
+"""
 import logging
+import os
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-import openai
-from langgraph.errors import GraphRecursionError
-from langchain_core.messages import BaseMessage, HumanMessage
+import httpx
+from langchain_core.messages import BaseMessage, messages_from_dict, messages_to_dict
 
-from assistente.config import ErroreConfigurazione, carica_config
-from assistente.grafo import costruisci_grafo
+from assistente.agente import Sessione
 from assistente.comandi import esegui_comando
-from assistente.mcp_client import PromptMcp, elenca_prompt, leggi_resource, ottieni_prompt
-from assistente.modello import crea_classificatore, crea_modello, crea_revisore, crea_riassuntore
-from assistente.preferenze import carica_preferenze
-from assistente.strumenti import componi_strumenti
+from assistente.mcp_client import ArgomentoPrompt, ErroreMcp, PromptMcp
 
 LOG = logging.getLogger("assistente.terminale")
 USCITA = "esci"
-# Riassunto e Router consumano un passaggio ciascuno all'inizio di ogni turno (anche quando il Riassunto
-# non comprime), il Revisore uno per ogni tentativo dell'agente.
-PASSAGGI_RIASSUNTO = 1
-PASSAGGI_ROUTER = 1
-PASSAGGI_REVISORE = 1
-MESSAGGIO_LIMITE = (
-    "La richiesta non è stata completata: raggiunto il limite di {limite} passaggi. "
-    "Puoi riprovare o riformulare la domanda."
-)
-ERRORE_SERVER = (
-    "Non riesco a ottenere una risposta dal server del modello ({errore}). "
-    "Controlla che LM Studio sia attivo e che LM_STUDIO_BASE_URL e LM_STUDIO_MODEL "
-    "corrispondano a quanto elencato da GET /v1/models."
-)
+AGENTE_URL_PREDEFINITO = "http://localhost:8002"
+NON_RAGGIUNGIBILE = "Agente non raggiungibile su {url}: avvia `python -m assistente.servizio_agente` o controlla AGENTE_URL."
+# I turni possono durare minuti con un modello locale: nessun limite sulla lettura della risposta.
+TIMEOUT = httpx.Timeout(10.0, read=None)
 
 
 def chiedi_conferma(messaggio: str) -> bool:
@@ -42,54 +32,125 @@ def chiedi_conferma(messaggio: str) -> bool:
         return False
 
 
-AVVISO_RISPOSTA_VUOTA = "(Il modello ha restituito una risposta vuota. Riprova o riformula la domanda.)"
-
-
-def limite_ricorsione(max_passaggi: int, max_revisioni: int) -> int:
-    """`recursion_limit` del turno (spec Step 2 §8, Step 3 §11): MAX_PASSAGGI è il budget nominale di ogni tentativo."""
-    return PASSAGGI_RIASSUNTO + PASSAGGI_ROUTER + (max_revisioni + 1) * (max_passaggi + PASSAGGI_REVISORE)
+class ErroreAgente(Exception):
+    """L'agente non ha risposto al turno; il messaggio è il testo da mostrare all'utente."""
 
 
 @dataclass(frozen=True)
-class Sessione:
-    """Cronologia e riassunto della sessione in corso (spec Step 3 §5.2): immutabile, mai salvata su disco."""
-
-    messaggi: tuple[BaseMessage, ...] = ()
-    riassunto: str = ""
-
-
-def esegui_turno(
-    grafo, sessione: Sessione, domanda: str, max_passaggi: int, *, max_revisioni: int
-) -> tuple[Sessione, str]:
-    """Esegue il turno di una domanda scritta dall'utente."""
-    return esegui_turno_messaggi(grafo, sessione, [HumanMessage(domanda)], max_passaggi, max_revisioni=max_revisioni)
+class EsitoChat:
+    sessione: Sessione
+    risposta: str
+    conferme_richieste: tuple[dict, ...] = ()
 
 
-def esegui_turno_messaggi(
-    grafo, sessione: Sessione, nuovi: Sequence[BaseMessage], max_passaggi: int, *, max_revisioni: int
-) -> tuple[Sessione, str]:
-    """Esegue un turno con i messaggi `nuovi` (una domanda o i messaggi di un prompt MCP, spec Step 5 §10.1).
-
-    Se fallisce restituisce la sessione ricevuta, lo stesso oggetto (spec Step 3 §5.3).
-    """
+def _testo_errore(risposta: httpx.Response) -> str:
     try:
-        esito = grafo.invoke(
-            # Copie: add_messages assegna gli id sugli oggetti ricevuti; la sessione non va mai toccata (§5.3).
-            {
-                "messages": [*(m.model_copy() for m in sessione.messaggi), *(m.model_copy() for m in nuovi)],
-                "riassunto": sessione.riassunto,
-            },
-            config={"recursion_limit": limite_ricorsione(max_passaggi, max_revisioni)},
+        corpo = risposta.json()
+    except ValueError:
+        return f"errore HTTP {risposta.status_code}"
+    if isinstance(corpo, dict) and isinstance(corpo.get("errore"), str):
+        return corpo["errore"]
+    return f"errore HTTP {risposta.status_code}: {corpo}"
+
+
+class ClientAgente:
+    """Chiamate all'API dell'agente su un `httpx.Client` già configurato con `base_url`."""
+
+    def __init__(self, http: httpx.Client):
+        self.http = http
+
+    def _invia(self, metodo: str, percorso: str, **opzioni) -> httpx.Response:
+        try:
+            return self.http.request(metodo, percorso, **opzioni)
+        except httpx.TransportError as errore:
+            LOG.warning("agente non raggiungibile: %s", errore)
+            raise ErroreAgente(NON_RAGGIUNGIBILE.format(url=self.http.base_url)) from errore
+
+    def chat(
+        self,
+        sessione: Sessione,
+        *,
+        messaggio: str | None = None,
+        messaggi: Sequence[tuple[str, str]] | None = None,
+        conferme: Sequence[dict] = (),
+    ) -> EsitoChat:
+        corpo = {
+            "cronologia": messages_to_dict(list(sessione.messaggi)),
+            "riassunto": sessione.riassunto,
+            "conferme": list(conferme),
+        }
+        if messaggi is not None:
+            corpo["messaggi"] = [{"ruolo": ruolo, "testo": testo} for ruolo, testo in messaggi]
+        else:
+            corpo["messaggio"] = messaggio
+        risposta = self._invia("POST", "/chat", json=corpo)
+        if risposta.status_code != 200:
+            raise ErroreAgente(_testo_errore(risposta))
+        dati = risposta.json()
+        return EsitoChat(
+            Sessione(tuple(messages_from_dict(dati["cronologia"])), dati["riassunto"]),
+            dati["risposta"],
+            tuple(dati["conferme_richieste"]),
         )
-    except GraphRecursionError:
-        LOG.warning("limite di passaggi raggiunto (%s): turno scartato", max_passaggi)
-        return sessione, MESSAGGIO_LIMITE.format(limite=max_passaggi)
-    except openai.OpenAIError as errore:
-        return sessione, ERRORE_SERVER.format(errore=errore)
-    # La cronologia può essere più corta di quella ricevuta: il Riassunto toglie i turni vecchi.
-    nuova = Sessione(tuple(esito["messages"]), esito.get("riassunto", sessione.riassunto))
-    risposta = esito["messages"][-1].text
-    return nuova, risposta if risposta.strip() else AVVISO_RISPOSTA_VUOTA
+
+    def _prompt(self, metodo: str, percorso: str, **opzioni):
+        try:
+            risposta = self._invia(metodo, percorso, **opzioni)
+        except ErroreAgente as errore:
+            raise ErroreMcp(str(errore)) from errore
+        if risposta.status_code != 200:
+            raise ErroreMcp(_testo_errore(risposta))
+        return risposta.json()
+
+    def elenca_prompt(self) -> tuple[PromptMcp, ...]:
+        return tuple(
+            PromptMcp(
+                nome=p["nome"], descrizione=p["descrizione"],
+                argomenti=tuple(ArgomentoPrompt(a["nome"], a["descrizione"], a["obbligatorio"]) for a in p["argomenti"]),
+            )
+            for p in self._prompt("GET", "/prompts")
+        )
+
+    def ottieni_prompt(self, nome: str, argomenti: dict[str, str]) -> list[tuple[str, str]]:
+        dati = self._prompt("POST", f"/prompts/{nome}", json={"argomenti": argomenti})
+        return [(m["ruolo"], m["testo"]) for m in dati]
+
+    def stato(self) -> tuple[int, dict]:
+        """Codice e corpo di GET /stato; solleva `ErroreAgente` se l'agente non risponde."""
+        risposta = self._invia("GET", "/stato")
+        try:
+            return risposta.status_code, risposta.json()
+        except ValueError:
+            return risposta.status_code, {}
+
+
+def _coppie(messaggi: Sequence[BaseMessage]) -> list[tuple[str, str]]:
+    return [("user" if m.type == "human" else "assistant", m.text) for m in messaggi]
+
+
+def esegui_turno_client(
+    client: ClientAgente,
+    sessione: Sessione,
+    chiedi: Callable[[str], bool],
+    *,
+    messaggio: str | None = None,
+    messaggi: Sequence[tuple[str, str]] | None = None,
+) -> tuple[Sessione, str]:
+    """Un turno attraverso l'API. Se l'agente chiede conferme e l'utente ne approva almeno una, il turno
+    si ripete dalla stessa sessione con le conferme (spec §4.2). Su errore restituisce la sessione ricevuta."""
+    conferme: list[dict] = []
+    while True:
+        try:
+            esito = client.chat(sessione, messaggio=messaggio, messaggi=messaggi, conferme=conferme)
+        except ErroreAgente as errore:
+            return sessione, str(errore)
+        approvate = [
+            c for c in esito.conferme_richieste
+            if c not in conferme and chiedi(f"Confermi: {c['strumento']} {c['argomenti']}?")
+        ]
+        if not approvate:
+            return esito.sessione, esito.risposta
+        conferme.extend(approvate)
 
 
 def ripulisci_input(testo: str) -> str:
@@ -103,14 +164,11 @@ def ripulisci_input(testo: str) -> str:
 
 
 def esegui_chat(
-    grafo,
-    max_passaggi: int,
+    client: ClientAgente,
     leggi: Callable[[], str],
     scrivi: Callable[[str], None],
     *,
-    max_revisioni: int,
-    elenca: Callable[[], Sequence[PromptMcp]] | None = None,
-    ottieni: Callable[[str, dict[str, str]], list[tuple[str, str]]] | None = None,
+    chiedi: Callable[[str], bool] = chiedi_conferma,
 ) -> None:
     """Ciclo della chat. Le righe che iniziano con `/` sono comandi (Step 5): non vanno mai al modello così come sono."""
     sessione = Sessione()  # nessuna persistenza tra esecuzioni
@@ -122,46 +180,33 @@ def esegui_chat(
             if not domanda:
                 continue
             if domanda.startswith("/"):
-                righe, messaggi = esegui_comando(domanda, elenca, ottieni)
+                righe, messaggi = esegui_comando(domanda, client.elenca_prompt, client.ottieni_prompt)
                 for riga in righe:
                     scrivi(riga)
                 if not messaggi:
                     continue
-                sessione, testo = esegui_turno_messaggi(
-                    grafo, sessione, messaggi, max_passaggi, max_revisioni=max_revisioni
-                )
+                sessione, testo = esegui_turno_client(client, sessione, chiedi, messaggi=_coppie(messaggi))
             else:
-                sessione, testo = esegui_turno(grafo, sessione, domanda, max_passaggi, max_revisioni=max_revisioni)
+                sessione, testo = esegui_turno_client(client, sessione, chiedi, messaggio=domanda)
         except (EOFError, KeyboardInterrupt):
             return
         scrivi(testo)
 
 
-def main() -> int:
+def main(crea_http: Callable[..., httpx.Client] = httpx.Client) -> int:
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
-    try:
-        config = carica_config()
-    except ErroreConfigurazione as errore:
-        print(errore, file=sys.stderr)
-        return 1
-    # Le preferenze si leggono una volta per sessione, decise dall'host e non dal modello (spec Step 4 §6).
-    strumenti, preferenze, avvisi = componi_strumenti(
-        config, chiedi_conferma=chiedi_conferma, carica_preferenze=lambda: carica_preferenze(config, leggi_resource)
-    )
-    for avviso in avvisi:
-        print(avviso, file=sys.stderr)
-    grafo = costruisci_grafo(
-        crea_modello(config, strumenti), strumenti, classificatore=crea_classificatore(config), ambito=config.ambito,
-        revisore=crea_revisore(config), max_revisioni=config.max_revisioni,
-        riassuntore=crea_riassuntore(config), soglia_riassunto=config.soglia_riassunto, preferenze=preferenze,
-    )
-    # Lo stesso valore va al grafo (Revisore) e al turno (recursion_limit): spec §17.
-    # Prompt MCP (Step 5): discovery al momento del comando, con URL e timeout degli strumenti MCP.
-    esegui_chat(
-        grafo, config.max_passaggi, lambda: input("Tu: "), print, max_revisioni=config.max_revisioni,
-        elenca=lambda: elenca_prompt(config.mcp_url, config.mcp_timeout),
-        ottieni=lambda nome, argomenti: ottieni_prompt(config.mcp_url, nome, argomenti, config.mcp_timeout),
-    )
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # una riga per richiesta coprirebbe la chat
+    url = os.environ.get("AGENTE_URL", "").strip() or AGENTE_URL_PREDEFINITO
+    with crea_http(base_url=url, timeout=TIMEOUT) as http:
+        client = ClientAgente(http)
+        try:
+            codice, componenti = client.stato()
+        except ErroreAgente as errore:
+            print(errore, file=sys.stderr)
+            return 1
+        if codice != 200:
+            print(f"Avviso: agente avviato ma non tutto è raggiungibile: {componenti}", file=sys.stderr)
+        esegui_chat(client, lambda: input("Tu: "), print)
     return 0
 
 

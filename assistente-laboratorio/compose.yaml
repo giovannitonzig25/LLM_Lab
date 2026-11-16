@@ -45,11 +45,13 @@ services:
       start_period: 5s
       retries: 3
 
-  assistente:
+  agente:
+    # Step 6: l'agente come servizio HTTP; la CLI (`assistente`) è un suo client.
     build: .
-    stdin_open: true
-    tty: true
+    command: ["python", "-m", "assistente.servizio_agente"]
     env_file: .env
+    ports:
+      - "127.0.0.1:8002:8002"
     depends_on:
       server-mcp:
         # Mai service_healthy: con il server fermo o non sano l'agente deve partire lo stesso
@@ -66,6 +68,31 @@ services:
       # Secondi di attesa all'avvio perché il server MCP risponda (0 = nessuna attesa).
       MCP_ATTESA_AVVIO: ${MCP_ATTESA_AVVIO:-20}
       SERVIZI_BASE_URL: ${SERVIZI_DOCKER_URL:-http://servizi-http:8000}
+      AGENTE_HOST: 0.0.0.0
+      AGENTE_PORT: "8002"
+    healthcheck:
+      # Il servizio risponde (anche in avvio ridotto): /openapi.json non dipende da MCP né dal modello.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8002/openapi.json', timeout=3).status == 200 else 1)"
+      interval: 5s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+
+  assistente:
+    # CLI: conserva la conversazione e la manda all'agente a ogni turno.
+    build: .
+    stdin_open: true
+    tty: true
+    depends_on:
+      agente:
+        # L'agente aspetta fino a MCP_ATTESA_AVVIO secondi prima di ascoltare: la CLI parte quando risponde.
+        condition: service_healthy
+    environment:
+      AGENTE_URL: http://agente:8002
 
 volumes:
   dati-note:

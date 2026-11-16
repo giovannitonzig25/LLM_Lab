@@ -5,7 +5,16 @@ from langchain_core.messages import AIMessage, HumanMessage
 from assistente.grafo import costruisci_grafo
 from assistente.config import SOGLIA_RIASSUNTO_PREDEFINITA
 from finti import riassuntore_inerte
-from assistente.terminale import esegui_chat, Sessione, esegui_turno
+from assistente.agente import Sessione, esegui_turno
+from cli_su_api import chat_su_grafo
+from fastapi.testclient import TestClient
+
+from assistente import agente
+from assistente.agente import costruisci_agente
+from assistente.config import carica_config
+from assistente.mcp_client import elenca_prompt, ottieni_prompt
+from assistente.servizio_agente.app import crea_app
+from assistente.terminale import esegui_chat
 from assistente.preferenze import PREFERENZE_PREDEFINITE
 from finti import AMBITO_TEST, ModelloSimulato, approva_sempre, in_ambito
 
@@ -21,7 +30,7 @@ def esegui(grafo, righe):
             raise voce
         return voce
 
-    esegui_chat(grafo, 6, leggi, stampato.append, max_revisioni=1)
+    chat_su_grafo(grafo, leggi, stampato.append)
     return stampato
 
 
@@ -122,9 +131,13 @@ def test_risposta_vuota_stampa_un_avviso():
 
 
 def test_ctrl_c_durante_la_risposta_termina_senza_eccezioni():
-    grafo, _ = grafo_con(KeyboardInterrupt())
+    class ClientInterrotto:
+        def chat(self, *a, **k):
+            raise KeyboardInterrupt
 
-    stampato = esegui(grafo, ["Ciao"])
+    stampato = []
+    righe = iter(["Ciao"])
+    esegui_chat(ClientInterrotto(), lambda: next(righe), stampato.append)
 
     assert stampato == []
 
@@ -146,30 +159,53 @@ def test_contenuto_a_blocchi_vuoto_stampa_un_avviso():
 
 
 
-def test_main_scrive_gli_avvisi_su_stderr_e_continua(monkeypatch, capsys):
-    from assistente import terminale
-
+def ambiente_agente(monkeypatch, crea_modello, url_mcp=None):
+    """Costruisce l'agente come il servizio (`costruisci_agente`), con modelli simulati."""
     monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
     monkeypatch.setenv("LM_STUDIO_MODEL", "m")
     monkeypatch.setenv("AMBITO_AGENTE", "a")
+    if url_mcp:
+        monkeypatch.setenv("MCP_URL", url_mcp)
+    monkeypatch.setattr(agente, "crea_classificatore", lambda config: in_ambito())
+    monkeypatch.setattr(agente, "crea_revisore", lambda config: approva_sempre())
+    monkeypatch.setattr(agente, "crea_modello", crea_modello)
+    return costruisci_agente(carica_config())
+
+
+def main_su_app(monkeypatch, app, leggi):
+    """Esegue `terminale.main` con l'API servita in memoria e `input` sostituito da `leggi`."""
+    monkeypatch.setattr("builtins.input", leggi)
+    return terminale.main(crea_http=lambda **opzioni: TestClient(app))
+
+
+def test_costruisci_agente_restituisce_gli_avvisi(monkeypatch):
     monkeypatch.setattr(
-        terminale, "componi_strumenti",
+        agente, "componi_strumenti",
         lambda config, chiedi_conferma=None, carica_preferenze=None: ([], PREFERENZE_PREDEFINITE, ["AVVISO: server MCP assente"]),
     )
-    monkeypatch.setattr(terminale, "crea_classificatore", lambda config: in_ambito())
-    monkeypatch.setattr(terminale, "crea_revisore", lambda config: approva_sempre())
-    monkeypatch.setattr(
-        terminale, "crea_modello", lambda config, strumenti: ModelloSimulato([AIMessage("Ciao!")])
-    )
-    righe = iter(["salve", "esci"])
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(righe))
+    _, avvisi = ambiente_agente(monkeypatch, lambda config, strumenti: ModelloSimulato([AIMessage("Ciao!")]))
 
-    assert terminale.main() == 0
+    assert avvisi == ["AVVISO: server MCP assente"]
+
+
+def test_main_con_agente_parzialmente_raggiungibile_avvisa_e_continua(monkeypatch, capsys):
+    grafo, _ = grafo_con("Ciao!")
+    app = crea_app(grafo, max_passaggi=6, max_revisioni=1, stato_mcp=lambda: "non raggiungibile: spento", stato_modello=lambda: "ok")
+    righe = iter(["salve", "esci"])
+
+    assert main_su_app(monkeypatch, app, lambda prompt="": next(righe)) == 0
 
     letto = capsys.readouterr()
-    assert "AVVISO: server MCP assente" in letto.err
-    assert "AVVISO: server MCP assente" not in letto.out
+    assert "non raggiungibile: spento" in letto.err
     assert "Ciao!" in letto.out
+
+
+def test_main_senza_agente_esce_con_1(monkeypatch, capsys):
+    monkeypatch.setenv("AGENTE_URL", "http://127.0.0.1:9")  # porta chiusa
+
+    assert terminale.main() == 1
+
+    assert "Agente non raggiungibile su http://127.0.0.1:9" in capsys.readouterr().err
 
 
 # --- T5: conferma di cancellazione chiesta dal terminale, con server MCP reale ---
@@ -184,9 +220,10 @@ from server_reale import avvia_server_mcp
 
 
 def esegui_main_con_cancellazione(monkeypatch, tmp_path, risposta_conferma, argomenti=None):
-    """Fa girare main() con un server reale; il modello chiede subito `elimina_nota` (id 1).
+    """Fa girare CLI e API con un server MCP reale; il modello chiede subito `elimina_nota` (id 1).
 
-    Restituisce (prompt mostrati, esiste ancora la nota 1, testo della chat).
+    Con la conferma il turno si ripete (spec Step 6 §4.2): il modello simulato ha le risposte per due giri.
+    Restituisce (prompt mostrati, esiste ancora la nota 1).
     """
     percorso = str(tmp_path / "note.db")
     ArchivioNote(percorso).aggiungi("da cancellare")
@@ -201,19 +238,11 @@ def esegui_main_con_cancellazione(monkeypatch, tmp_path, risposta_conferma, argo
         return voce
 
     richiesta = {"name": "elimina_nota", "args": argomenti or {"id": 1, "conferma": True}, "id": "c1", "type": "tool_call"}
+    risposte = [AIMessage("", tool_calls=[richiesta]), AIMessage("Fine")] * 2
     with avvia_server_mcp(crea_server(ArchivioNote(percorso))) as url:
-        monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
-        monkeypatch.setenv("LM_STUDIO_MODEL", "m")
-        monkeypatch.setenv("AMBITO_AGENTE", "a")
-        monkeypatch.setenv("MCP_URL", url)
-        monkeypatch.setattr(terminale, "crea_classificatore", lambda config: in_ambito())
-        monkeypatch.setattr(terminale, "crea_revisore", lambda config: approva_sempre())
-        monkeypatch.setattr(
-            terminale, "crea_modello",
-            lambda config, strumenti: ModelloSimulato([AIMessage("", tool_calls=[richiesta]), AIMessage("Fine")]),
-        )
-        monkeypatch.setattr("builtins.input", finto_input)
-        assert terminale.main() == 0
+        grafo, _ = ambiente_agente(monkeypatch, lambda config, strumenti: ModelloSimulato(risposte), url)
+        app = crea_app(grafo, max_passaggi=6, max_revisioni=1)
+        assert main_su_app(monkeypatch, app, finto_input) == 0
     esiste = sqlite3.connect(percorso).execute("SELECT 1 FROM note WHERE id = 1").fetchone() is not None
     return prompt, esiste
 
@@ -294,16 +323,9 @@ def test_main_bind_tools_senza_resource(monkeypatch, tmp_path):
         return modello
 
     with avvia_server_mcp(crea_server(ArchivioNote(str(tmp_path / "note.db")), percorso_preferenze=file_preferenze)) as url:
-        monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
-        monkeypatch.setenv("LM_STUDIO_MODEL", "m")
-        monkeypatch.setenv("AMBITO_AGENTE", "a")
-        monkeypatch.setenv("MCP_URL", url)
-        monkeypatch.setattr(terminale, "crea_classificatore", lambda config: in_ambito())
-        monkeypatch.setattr(terminale, "crea_revisore", lambda config: approva_sempre())
-        monkeypatch.setattr(terminale, "crea_modello", crea_modello_finto)
+        grafo, _ = ambiente_agente(monkeypatch, crea_modello_finto, url)
         righe = iter(["salve", "esci"])
-        monkeypatch.setattr("builtins.input", lambda prompt="": next(righe))
-        assert terminale.main() == 0
+        assert main_su_app(monkeypatch, crea_app(grafo, max_passaggi=6, max_revisioni=1), lambda prompt="": next(righe)) == 0
 
     nomi = [s.name for s in registrati]
     assert nomi == [
@@ -325,7 +347,7 @@ from langgraph.errors import GraphRecursionError
 
 from assistente.comandi import CLIENT_NON_CONFIGURATO, COMANDO_SCONOSCIUTO
 from assistente.mcp_client import ArgomentoPrompt, ErroreMcp, PromptMcp
-from assistente.terminale import esegui_turno_messaggi
+from assistente.agente import esegui_turno_messaggi
 from finti import ClassificatoreSimulato, valutazione
 
 SPIEGA = PromptMcp(
@@ -348,7 +370,7 @@ def ottieni_finto(nome, argomenti):
 def chat(grafo, righe, elenca=elenca_finto, ottieni=ottieni_finto):
     coda = list(righe)
     stampato = []
-    esegui_chat(grafo, 6, lambda: coda.pop(0), stampato.append, max_revisioni=1, elenca=elenca, ottieni=ottieni)
+    chat_su_grafo(grafo, lambda: coda.pop(0), stampato.append, elenca=elenca, ottieni=ottieni)
     return stampato
 
 
@@ -454,16 +476,13 @@ def test_prompt_attraversa_tutto_il_grafo():
 def test_main_prompt_spiega_dal_server_reale(monkeypatch, tmp_path, capsys):
     modello = ModelloSimulato([AIMessage("MCP è un protocollo.")])
     with avvia_server_mcp(crea_server(ArchivioNote(str(tmp_path / "note.db")))) as url:
-        monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
-        monkeypatch.setenv("LM_STUDIO_MODEL", "m")
-        monkeypatch.setenv("AMBITO_AGENTE", "a")
-        monkeypatch.setenv("MCP_URL", url)
-        monkeypatch.setattr(terminale, "crea_classificatore", lambda config: in_ambito())
-        monkeypatch.setattr(terminale, "crea_revisore", lambda config: approva_sempre())
-        monkeypatch.setattr(terminale, "crea_modello", lambda config, strumenti: modello)
+        grafo, _ = ambiente_agente(monkeypatch, lambda config, strumenti: modello, url)
+        app = crea_app(
+            grafo, max_passaggi=6, max_revisioni=1,
+            elenca=lambda: elenca_prompt(url), ottieni=lambda nome, argomenti: ottieni_prompt(url, nome, argomenti),
+        )
         righe = iter(["/prompts", '/prompt spiega argomento="Model Context Protocol"', "esci"])
-        monkeypatch.setattr("builtins.input", lambda prompt="": next(righe))
-        assert terminale.main() == 0
+        assert main_su_app(monkeypatch, app, lambda prompt="": next(righe)) == 0
 
     uscita = capsys.readouterr().out
     assert "Prompt disponibili:" in uscita

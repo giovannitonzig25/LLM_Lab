@@ -123,7 +123,7 @@ class StrumentoMcp(BaseTool):
     url: str
     timeout: float = 10.0
     richiede_conferma: bool = False
-    chiedi_conferma: Callable[[str], bool] | None = None
+    chiedi_conferma: Callable[[str, dict], bool] | None = None  # (nome, argomenti)
 
     def _conferma_dell_utente(self, argomenti: dict) -> bool:
         """Chiede all'utente (fuori dal modello); solo un `True` esplicito vale come sì."""
@@ -131,7 +131,7 @@ class StrumentoMcp(BaseTool):
             LOG.warning("conferma non disponibile: strumento=%s non eseguito", self.name)
             return False
         try:
-            esito = self.chiedi_conferma(f"Confermi: {self.name} {argomenti}?") is True
+            esito = self.chiedi_conferma(self.name, dict(argomenti)) is True
         except Exception as errore:  # KeyboardInterrupt non è un Exception: risale
             LOG.warning("conferma fallita (%s): strumento=%s non eseguito", type(errore).__name__, self.name)
             return False
@@ -174,7 +174,7 @@ async def _elenca(url: str, timeout: float) -> list:
 def scopri_strumenti(
     url: str,
     timeout: float = 10.0,
-    chiedi_conferma: Callable[[str], bool] | None = None,
+    chiedi_conferma: Callable[[str, dict], bool] | None = None,
 ) -> list[BaseTool]:
     """Discovery reale: un `BaseTool` per ogni strumento pubblicato dal server.
 
