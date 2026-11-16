@@ -10,12 +10,13 @@ from langchain_core.tools import BaseTool, tool
 from assistente.calcolatrice import calcola
 from assistente.config import Config
 from assistente.mcp_client import ErroreMcp, scopri_strumenti
+from assistente.preferenze import PREFERENZE_PREDEFINITE
 from assistente.strumenti_http import crea_strumenti_http
 from assistente.unita import converti_unita
 
 LOG = logging.getLogger("assistente.strumenti")
 
-FUSO_PREDEFINITO = "Europe/Rome"
+FUSO_PREDEFINITO = PREFERENZE_PREDEFINITE.fuso_orario
 
 
 def adesso_utc() -> datetime:
