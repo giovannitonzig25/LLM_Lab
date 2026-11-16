@@ -17,20 +17,30 @@ Documento per avviare lo Step 4 in una nuova sessione Claude Code. Va letto per 
   - **Step 3 Riassunto della cronologia:** merge `c975c41`. Specifica `specs/2026-11-15-riassunto-design.md`, rivista il 2026-11-16 (cornice B.1, §13.4).
 - **`CLAUDE.md`:** aggiornato con il modulo `riassunto`. Si modifica di nuovo solo con autorizzazione esplicita, a fine Step.
 
-## 2. Obiettivo dello Step 4: da confermare sulla slide
+## 2. Obiettivo dello Step 4: Resource MCP — preferenze dell'utente (confermato)
 
-**Il testo della slide non è stato riletto in questa sessione.** Il PDF non si è potuto aprire: mancano `pdftoppm` e `pypdf`, e il testo è codificato nei font.
+**Fonte:** slide «Step 4» di `../LLM_Lez_6.pdf`, pagina 8. Contenuto recuperato e verificato dall'utente il 2026-11-16; non serve riaprire il PDF.
 
-Secondo gli handoff precedenti, gli Step 4–9 trattano:
-- resource e prompt MCP;
-- agente come servizio HTTP;
-- back-end con salvataggio delle chat;
-- front-end;
-- Compose per componente.
+**Requisiti della slide:**
 
-**Ipotesi da verificare:** lo Step 4 riguarda resource e prompt MCP.
+1. Il server MCP espone la resource `utente://preferenze`, che contiene:
+   - lingua delle risposte;
+   - fuso orario predefinito;
+   - stile delle risposte (sintetico o dettagliato).
+2. L'applicazione host legge la resource **all'inizio di ogni sessione** e inserisce le preferenze **in cima al prompt di sistema**.
+3. La resource **non** va esposta tra gli strumenti passati a `bind_tools`: la lettura la decide l'host, non il modello.
+4. Se la resource non è disponibile, si usano **valori predefiniti** e la situazione viene **segnalata nei log**.
 
-**Prima azione:** rileggere la slide «Step 4» in `../LLM_Lez_6.pdf`. Se non si apre, chiedere all'utente il testo della slide. Riportare nella specifica il testo esatto dei requisiti e delle evidenze richieste. Non anticipare gli step successivi.
+**Obiettivo didattico:** modificando il file delle preferenze, il comportamento dell'agente cambia senza modificare il codice.
+
+**Evidenze richieste:**
+- alla domanda «Che ore sono?» l'agente usa il fuso predefinito senza chiederlo (la slide suggerisce di provare con `America/New_York`);
+- modificando lingua o stile nel file delle preferenze, la sessione successiva risponde di conseguenza;
+- la lettura della resource è visibile nei log, separata dalle chiamate ai tool.
+
+**Fuori ambito:** lo Step 5 tratta i **Prompt MCP** richiamati esplicitamente dall'utente. Non anticiparlo nello Step 4, né anticipare gli step successivi (agente come servizio HTTP, back-end con salvataggio delle chat, front-end, Compose per componente).
+
+**Nella specifica:** riportare questi requisiti e queste evidenze nel testo esatto qui sopra.
 
 ## 3. Architettura attuale rilevante (verificata su `c975c41`)
 
@@ -124,5 +134,5 @@ START → riassunto → router ─┬─ conversazione → modello ─┬─ too
 ## 7. Prossima azione
 
 1. Leggere questo handoff e `CLAUDE.md`. Verificare `git status`, `git log -2` (atteso il commit di questo handoff sopra `c975c41`) e la suite (636 verdi).
-2. Rileggere la slide dello Step 4 (vedi §2) e confermare l'obiettivo con l'utente.
+2. L'obiettivo dello Step 4 è confermato (vedi §2): non serve rileggere la slide.
 3. Avviare `superpowers:brainstorming`, poi specifica e piano da sottoporre all'utente. Solo dopo, con autorizzazione, il ramo `feat/<nome>` da `dev`.
