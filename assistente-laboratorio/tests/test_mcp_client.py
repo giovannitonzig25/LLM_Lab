@@ -194,8 +194,8 @@ class Conferma:
     def __init__(self, esito=True, solleva=None):
         self.esito, self.solleva, self.messaggi = esito, solleva, []
 
-    def __call__(self, messaggio):
-        self.messaggi.append(messaggio)
+    def __call__(self, nome, argomenti):
+        self.messaggi.append(f"{nome} {argomenti}")
         if self.solleva:
             raise self.solleva
         return self.esito
@@ -248,7 +248,7 @@ def test_conferma_negata_o_che_solleva_non_cancella(server_con_nota, errore):
 def test_conferma_diversa_da_true_non_cancella(server_con_nota):
     url, percorso = server_con_nota
 
-    risultato = strumento(url, "elimina_nota", lambda m: "s").invoke({"id": 1})  # truthy ma non True
+    risultato = strumento(url, "elimina_nota", lambda nome, argomenti: "s").invoke({"id": 1})  # truthy ma non True
 
     assert risultato == MSG_NON_CONFERMATA
     assert nota_esiste(percorso)

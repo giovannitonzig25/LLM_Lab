@@ -297,7 +297,7 @@ from assistente.grafo import costruisci_grafo
 from assistente.config import SOGLIA_RIASSUNTO_PREDEFINITA
 from finti import riassuntore_inerte
 from assistente.router import e_osservazione
-from assistente.terminale import AVVISO_RISPOSTA_VUOTA, Sessione, esegui_turno, limite_ricorsione
+from assistente.agente import AVVISO_RISPOSTA_VUOTA, Sessione, esegui_turno, limite_ricorsione
 from finti import (
     AMBITO_TEST, ClassificatoreSimulato, ModelloSimulato, approva_sempre, fuori_ambito, in_ambito, rifiuta_sempre,
     valutazione,
@@ -608,7 +608,7 @@ import re
 
 import openai
 
-from assistente.terminale import ERRORE_SERVER
+from assistente.agente import ERRORE_SERVER
 
 
 def revisore_http(monkeypatch, contenuto, finish_reason="stop"):

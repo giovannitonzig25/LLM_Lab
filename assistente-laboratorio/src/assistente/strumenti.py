@@ -75,7 +75,7 @@ def componi_strumenti(
     scopri: Callable[..., list[BaseTool]] = scopri_strumenti,
     dormi: Callable[[float], None] = time.sleep,
     adesso: Callable[[], float] = time.monotonic,
-    chiedi_conferma: Callable[[str], bool] | None = None,
+    chiedi_conferma: Callable[[str, dict], bool] | None = None,
     carica_preferenze: Callable[[], Preferenze] | None = None,
 ) -> tuple[list[BaseTool], Preferenze, list[str]]:
     """Strumenti locali, HTTP (sempre presenti) e quelli scoperti via MCP; restituisce (strumenti, preferenze, avvisi).

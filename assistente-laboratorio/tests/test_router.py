@@ -165,7 +165,7 @@ from assistente.grafo import costruisci_grafo
 from assistente.config import SOGLIA_RIASSUNTO_PREDEFINITA
 from finti import riassuntore_inerte
 from assistente.strumenti import STRUMENTI
-from assistente.terminale import Sessione, esegui_turno
+from assistente.agente import Sessione, esegui_turno
 from finti import AMBITO_TEST, ClassificatoreSimulato, ModelloSimulato, fuori_ambito, approva_sempre, in_ambito
 
 

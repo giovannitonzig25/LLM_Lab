@@ -7,7 +7,8 @@ from assistente.grafo import costruisci_grafo
 from assistente.config import SOGLIA_RIASSUNTO_PREDEFINITA
 from finti import riassuntore_inerte
 from assistente.strumenti import STRUMENTI
-from assistente.terminale import esegui_chat, Sessione, esegui_turno
+from assistente.agente import Sessione, esegui_turno
+from cli_su_api import chat_su_grafo
 from finti import AMBITO_TEST, ModelloSimulato, approva_sempre, in_ambito
 
 CHIEDE_ORA = AIMessage(content="", tool_calls=[{"id": "c1", "name": "orologio", "args": {}}])
@@ -53,7 +54,7 @@ def test_la_chat_continua_dopo_il_limite():
     righe = iter(["loop", "Una domanda normale", "esci"])
     stampato = []
 
-    esegui_chat(grafo_in_loop(), 6, lambda: next(righe), stampato.append, max_revisioni=1)
+    chat_su_grafo(grafo_in_loop(), lambda: next(righe), stampato.append)
 
     assert "non è stata completata" in stampato[0]
     assert stampato[1] == "Ok"
