@@ -8,6 +8,7 @@ from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
+from assistente.preferenze import PREFERENZE_PREDEFINITE, Preferenze, testo_prompt
 from assistente.revisore import contesto_agente, crea_nodo_revisore
 from assistente.riassunto import CORNICE_AGENTE, crea_nodo_riassunto
 from assistente.router import crea_nodo_router, riassunto_presente, testo_rifiuto
@@ -55,17 +56,23 @@ def costruisci_grafo(
     max_revisioni: int,
     riassuntore,
     soglia_riassunto: int,
+    preferenze: Preferenze = PREFERENZE_PREDEFINITE,
 ):
     per_nome = {strumento.name: strumento for strumento in strumenti}
+    # Calcolato una volta: le preferenze valgono per tutta la sessione (spec Step 4 §10.1).
+    sistema_preferenze = testo_prompt(preferenze)
 
     def nodo_modello(stato: Stato) -> dict:
         LOG_ROUTER.info("agente: chiamata al modello")
         # Cronologia completa nello stato; all'agente niente bozze e osservazioni dei turni precedenti (spec §9.3).
         richiesta = contesto_agente(stato["messages"], stato["inizio_turno"])
         riassunto = stato.get("riassunto", "")
+        sistema = sistema_preferenze
         if riassunto_presente(riassunto):
-            # Messaggio temporaneo: solo nella richiesta, mai nello stato né nel conteggio (spec Step 3 §9.1).
-            richiesta = [SystemMessage(CORNICE_AGENTE.format(riassunto=riassunto)), *richiesta]
+            sistema += "\n\n" + CORNICE_AGENTE.format(riassunto=riassunto)
+        # Un solo SystemMessage temporaneo: solo nella richiesta, mai nello stato né nel conteggio
+        # (spec Step 3 §9.1, Step 4 §10.1).
+        richiesta = [SystemMessage(sistema), *richiesta]
         return {"messages": [modello.invoke(richiesta)]}
 
     def nodo_rifiuto(stato: Stato) -> dict:

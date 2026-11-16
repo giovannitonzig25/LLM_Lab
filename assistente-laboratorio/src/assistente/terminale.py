@@ -10,7 +10,9 @@ from langchain_core.messages import BaseMessage, HumanMessage
 
 from assistente.config import ErroreConfigurazione, carica_config
 from assistente.grafo import costruisci_grafo
+from assistente.mcp_client import leggi_resource
 from assistente.modello import crea_classificatore, crea_modello, crea_revisore, crea_riassuntore
+from assistente.preferenze import carica_preferenze
 from assistente.strumenti import componi_strumenti
 
 LOG = logging.getLogger("assistente.terminale")
@@ -110,13 +112,16 @@ def main() -> int:
     except ErroreConfigurazione as errore:
         print(errore, file=sys.stderr)
         return 1
-    strumenti, avvisi = componi_strumenti(config, chiedi_conferma=chiedi_conferma)
+    # Le preferenze si leggono una volta per sessione, decise dall'host e non dal modello (spec Step 4 §6).
+    strumenti, preferenze, avvisi = componi_strumenti(
+        config, chiedi_conferma=chiedi_conferma, carica_preferenze=lambda: carica_preferenze(config, leggi_resource)
+    )
     for avviso in avvisi:
         print(avviso, file=sys.stderr)
     grafo = costruisci_grafo(
         crea_modello(config, strumenti), strumenti, classificatore=crea_classificatore(config), ambito=config.ambito,
         revisore=crea_revisore(config), max_revisioni=config.max_revisioni,
-        riassuntore=crea_riassuntore(config), soglia_riassunto=config.soglia_riassunto,
+        riassuntore=crea_riassuntore(config), soglia_riassunto=config.soglia_riassunto, preferenze=preferenze,
     )
     # Lo stesso valore va al grafo (Revisore) e al turno (recursion_limit): spec §17.
     esegui_chat(grafo, config.max_passaggi, lambda: input("Tu: "), print, max_revisioni=config.max_revisioni)

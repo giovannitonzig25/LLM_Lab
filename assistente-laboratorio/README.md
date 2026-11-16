@@ -49,7 +49,7 @@ Lo script elenca gli identificativi restituiti da `GET /v1/models` ed esce con e
 
 Lato servizio HTTP (`python -m assistente.servizi_http`): `SERVIZI_HOST` (predefinito `127.0.0.1`), `SERVIZI_PORT` (predefinito `8000`).
 
-Lato server MCP (`python -m assistente.server_mcp`): `NOTE_DB_PATH` (file SQLite, predefinito `data/note.db`), `MCP_HOST` (predefinito `127.0.0.1`), `MCP_PORT` (predefinito `8001`).
+Lato server MCP (`python -m assistente.server_mcp`): `NOTE_DB_PATH` (file SQLite, predefinito `data/note.db`), `PREFERENZE_PATH` (file delle preferenze, predefinito `data/preferenze.json` nella cartella del progetto, vedi «Preferenze dell'utente»), `MCP_HOST` (predefinito `127.0.0.1`), `MCP_PORT` (predefinito `8001`).
 
 ## Avvio
 
@@ -92,6 +92,54 @@ Lo stesso servizio espone un catalogo di 10 corsi **fittizi** (nessun dato reale
 Gli strumenti HTTP sono **sempre registrati**, senza discovery: se il servizio è spento il modello riceve `Errore: servizio non raggiungibile su ...` alla chiamata e la chat continua.
 
 La cronologia vale per la sessione: dentro la stessa esecuzione il modello ricorda i turni precedenti, al riavvio riparte da zero. Se un turno fallisce (per esempio server spento) la cronologia resta com'era prima della domanda.
+
+## Preferenze dell'utente
+
+Il server MCP espone la **resource** `utente://preferenze` con tre preferenze: lingua delle risposte, fuso orario predefinito e stile. A differenza degli strumenti, una resource non la sceglie il modello: la legge **l'applicazione** una volta all'avvio di ogni sessione, e le preferenze finiscono in cima al prompt di sistema dell'agente. Cambiando il file cambia il comportamento della sessione successiva, senza toccare il codice.
+
+**Creare il file** (una volta, da `assistente-laboratorio/`; `data/` è ignorata da Git e su un clone nuovo non esiste ancora):
+
+```powershell
+New-Item -ItemType Directory -Force data | Out-Null
+Copy-Item preferenze.example.json data\preferenze.json
+```
+
+Formato (`preferenze.example.json`):
+
+```json
+{
+  "lingua": "italiano",
+  "fuso_orario": "Europe/Rome",
+  "stile": "sintetico"
+}
+```
+
+| Chiave | Valori ammessi |
+|---|---|
+| `lingua` | testo libero (per esempio `inglese`), al massimo 40 caratteri, su una riga |
+| `fuso_orario` | nome IANA, per esempio `Europe/Rome`, `America/New_York`, `Asia/Tokyo` |
+| `stile` | `sintetico` oppure `dettagliato` |
+
+Il file può essere salvato anche con BOM (Blocco note, PowerShell 5.1). Il server lo rilegge a ogni richiesta: dopo una modifica basta **riavviare l'agente**, non il server. In locale il percorso viene da `PREFERENZE_PATH`; se manca è `data/preferenze.json` nella cartella del progetto, da qualunque cartella si avvii il server.
+
+**Che cosa cambia:**
+- l'orologio usa il fuso preferito quando non ne viene indicato un altro: «Che ore sono?» dà l'ora di quel fuso; «Che ore sono a Tokyo?» resta Tokyo;
+- l'agente riceve in cima al prompt di sistema: rispondi in quella lingua, fuso predefinito, stile delle risposte. Router, Revisore e Riassunto non cambiano.
+
+**Valori predefiniti:** `italiano`, `Europe/Rome`, `sintetico`, cioè il comportamento di prima. Si usano per tutti e tre i campi se il server MCP non risponde, se il file manca o non si legge, se il testo non è JSON o non è un oggetto; si usano **solo per un campo** se quel campo manca o non è valido (le chiavi sconosciute vengono ignorate). In ogni caso l'agente parte.
+
+**Log** (logger `assistente.preferenze` nell'agente, `assistente.server_mcp` nel server), separati da quelli degli strumenti (`assistente.mcp`, `assistente.strumenti`):
+
+```
+INFO assistente.preferenze: resource utente://preferenze letta da http://localhost:8001/mcp
+INFO assistente.preferenze: preferenze della sessione: lingua=inglese (resource), fuso_orario=America/New_York (resource), stile=sintetico (predefinito)
+WARNING assistente.preferenze: preferenza stile non valida (ammessi solo sintetico o dettagliato: 'dettagliatissimo'): uso sintetico
+WARNING assistente.preferenze: preferenze non disponibili (...): uso i valori predefiniti
+```
+
+La riga `preferenze della sessione` c'è sempre e dice per ogni valore se viene dal file (`resource`) o dai valori predefiniti (`predefinito`). Con il server spento compaiono due avvisi distinti: quello degli strumenti MCP (invariato) e quello delle preferenze.
+
+**Docker:** `server-mcp` monta la cartella `./data` dell'host in sola lettura su `/preferenze` (`PREFERENZE_PATH=/preferenze/preferenze.json`). Crea il file prima dell'avvio; dopo una modifica basta un nuovo `docker compose run --rm assistente`, senza `docker compose build`.
 
 ## Avvio con Docker Compose
 
@@ -150,7 +198,7 @@ Nei log su stderr compaiono `strumenti scoperti su ...` (discovery MCP), `strume
 
 ## Strumento orologio e log
 
-Il modello può chiedere lo strumento `orologio`, con un fuso orario IANA (`timezone`, predefinito `Europe/Rome`). Il grafo lo esegue davvero e restituisce il risultato al modello. Ogni richiesta e ogni esito compaiono nei log su stderr:
+Il modello può chiedere lo strumento `orologio`, con un fuso orario IANA (`timezone`; se omesso si usa il fuso delle preferenze, `Europe/Rome` senza preferenze). Il grafo lo esegue davvero e restituisce il risultato al modello. Ogni richiesta e ogni esito compaiono nei log su stderr:
 
 ```
 INFO assistente.strumenti: strumento richiesto: nome=orologio argomenti={'timezone': 'Asia/Tokyo'}
@@ -293,6 +341,7 @@ Quando il limite è raggiunto il turno viene scartato: la cronologia torna a com
 src/assistente/   config, modello (LM Studio), grafo (LangGraph), terminale
                   riassunto (Riassunto della cronologia: turni, trascrizione, prompt, nodo)
                   router (Router di ambito: contesto, prompt, rifiuto)
+                  preferenze (preferenze dell'utente dalla resource MCP: validazione, prompt)
                   revisore (Revisore della risposta: giudizio, osservazione, contesto dell'agente)
                   strumenti (orologio e composizione), unita, calcolatrice
                   mcp_client, verifica_mcp (client MCP e controllo di salute)
@@ -335,9 +384,14 @@ docs/superpowers/ specifica e piano
 - **Errori imprevisti:** un'eccezione non legata al server del modello (per esempio una richiesta di strumento senza identificativo) interrompe la sessione.
 - **Input non valido:** i byte non validi in UTF-8 che il terminale può inviare (per esempio con certi caratteri incollati come `«»`, `°` o uno spazio non separabile in una sessione interattiva di Docker) vengono sostituiti con «�» prima di essere inviati al modello: la sessione non si interrompe, ma il modello vede quel carattere sostitutivo. Conviene riscrivere la riga.
 - **Prompt:** dopo Ctrl+C o Ctrl+D il cursore può restare sulla riga di «Tu: ».
+- **Preferenze e testi fissi:** il rifiuto del Router, gli avvisi e le conferme restano in italiano qualunque sia la `lingua` preferita.
+- **Preferenze e modello:** il programma garantisce solo il fuso dell'orologio senza argomenti; rispettare lingua e stile dipende dal modello locale. `lingua` è testo libero e non viene verificata.
+- **Preferenze per sessione:** vengono lette solo all'avvio; una modifica del file vale dalla sessione successiva. Con il server spento la lettura fa un tentativo in più (al massimo `MCP_TIMEOUT` secondi).
+- **Docker e cartella `data/`:** `server-mcp` vede tutta la cartella `data/` dell'host in sola lettura, compreso il `note.db` locale, che non usa (le note in Docker stanno nel volume `dati-note`).
 
 ## Diagnosi
 
+- **Preferenze ignorate:** cerca nei log dell'agente la riga `preferenze della sessione`: `(predefinito)` indica il campo non letto, e il `WARNING` precedente dice perché. Se il file manca, nei log del server compare anche il traceback di FastMCP con `ResourceError`: è atteso.
 - **Variabile mancante:** il programma lo dice e termina con codice 1.
 - **«Non riesco a ottenere una risposta dal server»:** LM Studio è spento o `LM_STUDIO_BASE_URL` è sbagliato. La chat resta aperta: riavviato il server, si può riprovare.
 - **Identificativo del modello:** LM Studio con un solo modello caricato ha risposto anche a un identificativo inesistente, quindi un errore di battitura può non dare errori. Verifica sempre con `prove_reali\verifica_modelli.py`.

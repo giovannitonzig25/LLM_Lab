@@ -193,3 +193,105 @@ def test_meteo_senza_argomento_o_di_tipo_sbagliato(tmp_path):
         with pytest.raises(ToolError) as errore:
             chiama(server, "meteo", argomenti)
         assert "Traceback" not in str(errore.value)
+
+
+# --- Step 4: resource utente://preferenze ---
+import json
+from pathlib import Path
+
+from assistente.server_mcp import PERCORSO_PREFERENZE_PREDEFINITO, percorso_preferenze
+
+RADICE = Path(__file__).resolve().parents[1]
+ESEMPIO = {"lingua": "italiano", "fuso_orario": "Europe/Rome", "stile": "sintetico"}
+
+
+def server_con_preferenze(tmp_path, file_preferenze):
+    return crea_server(
+        ArchivioNote(str(tmp_path / "note.db")), client_http=client_finto(), percorso_preferenze=file_preferenze
+    )
+
+
+def leggi_preferenze(url):
+    async def leggi():
+        async with Client(url) as client:
+            return await client.read_resource("utente://preferenze")
+
+    return asyncio.run(leggi())
+
+
+def test_resource_restituisce_il_testo_del_file(tmp_path):
+    file_preferenze = tmp_path / "preferenze.json"
+    file_preferenze.write_text('{"lingua": "inglese"}', encoding="utf-8")
+
+    with avvia_server_mcp(server_con_preferenze(tmp_path, file_preferenze)) as url:
+        [contenuto] = leggi_preferenze(url)
+
+    assert contenuto.text == '{"lingua": "inglese"}'
+    assert contenuto.mime_type == "application/json"
+
+
+def test_resource_riletta_a_ogni_richiesta(tmp_path):
+    file_preferenze = tmp_path / "preferenze.json"
+    file_preferenze.write_text('{"stile": "sintetico"}', encoding="utf-8")
+
+    with avvia_server_mcp(server_con_preferenze(tmp_path, file_preferenze)) as url:
+        [prima] = leggi_preferenze(url)
+        file_preferenze.write_text('{"stile": "dettagliato"}', encoding="utf-8")
+        [dopo] = leggi_preferenze(url)
+
+    assert (prima.text, dopo.text) == ('{"stile": "sintetico"}', '{"stile": "dettagliato"}')
+
+
+def test_resource_toglie_il_bom(tmp_path):
+    file_preferenze = tmp_path / "preferenze.json"
+    file_preferenze.write_text(json.dumps(ESEMPIO), encoding="utf-8-sig")
+
+    with avvia_server_mcp(server_con_preferenze(tmp_path, file_preferenze)) as url:
+        [contenuto] = leggi_preferenze(url)
+
+    assert not contenuto.text.startswith("\ufeff")
+    assert json.loads(contenuto.text) == ESEMPIO
+
+
+def test_resource_file_mancante_da_errore_con_percorso(tmp_path, caplog):
+    mancante = tmp_path / "manca_preferenze.json"
+
+    with caplog.at_level(logging.WARNING, logger="assistente.server_mcp"):
+        with avvia_server_mcp(server_con_preferenze(tmp_path, mancante)) as url:
+            with pytest.raises(Exception) as errore:
+                leggi_preferenze(url)
+
+    assert "manca_preferenze.json" in str(errore.value)
+    assert any("utente://preferenze" in r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
+
+
+def test_strumenti_invariati_e_resource_elencata(tmp_path):
+    async def elenca(url):
+        async with Client(url) as client:
+            return await client.list_tools(), await client.list_resources()
+
+    with avvia_server_mcp(server_con_preferenze(tmp_path, tmp_path / "p.json")) as url:
+        strumenti, resource = asyncio.run(elenca(url))
+
+    assert sorted(t.name for t in strumenti) == ["aggiungi_nota", "elenca_note", "elimina_nota", "meteo"]
+    assert [str(r.uri) for r in resource] == ["utente://preferenze"]
+
+
+def test_percorso_predefinito_indipendente_dalla_cartella_corrente(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    percorso = percorso_preferenze({})
+
+    assert percorso == PERCORSO_PREFERENZE_PREDEFINITO
+    assert percorso.is_absolute()
+    assert percorso.parts[-2:] == ("data", "preferenze.json")
+    assert (percorso.parent.parent / "src" / "assistente" / "server_mcp.py").is_file()
+
+
+def test_percorso_da_variabile():
+    assert percorso_preferenze({"PREFERENZE_PATH": " x/p.json "}) == Path("x/p.json")
+    assert percorso_preferenze({"PREFERENZE_PATH": "  "}) == PERCORSO_PREFERENZE_PREDEFINITO
+
+
+def test_esempio_versionato_valido():
+    assert json.loads((RADICE / "preferenze.example.json").read_text(encoding="utf-8")) == ESEMPIO

@@ -1,17 +1,18 @@
 """Server MCP (FastMCP, Streamable HTTP) con gli strumenti per le note.
 
-Avvio: `python -m assistente.server_mcp` (variabili `NOTE_DB_PATH`, `MCP_HOST`, `MCP_PORT`).
+Avvio: `python -m assistente.server_mcp` (variabili `NOTE_DB_PATH`, `PREFERENZE_PATH`, `MCP_HOST`, `MCP_PORT`).
 """
 
 import asyncio
 import logging
 import os
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 import httpx
 from fastmcp import FastMCP
-from fastmcp.exceptions import ToolError
+from fastmcp.exceptions import ResourceError, ToolError
 
 from assistente.meteo import ErroreMeteo, leggi_meteo
 from assistente.note import ArchivioNote, ErroreNote
@@ -20,11 +21,45 @@ logger = logging.getLogger("assistente.server_mcp")
 
 METEO_TIMEOUT = 10.0  # secondi, per ciascuna delle due richieste a Open-Meteo
 
+# Radice del progetto calcolata dalla posizione del modulo, non dalla cartella corrente (spec Step 4 §5.2).
+PERCORSO_PREFERENZE_PREDEFINITO = Path(__file__).resolve().parents[2] / "data" / "preferenze.json"
 
-def crea_server(archivio: ArchivioNote, client_http: httpx.Client | None = None) -> FastMCP:
-    """Server MCP con note e meteo. `client_http` serve ai test per simulare Open-Meteo."""
+
+def percorso_preferenze(env: Mapping[str, str] = os.environ) -> Path:
+    """`PREFERENZE_PATH` se impostata (un percorso relativo vale dalla cartella corrente), altrimenti il predefinito."""
+    valore = env.get("PREFERENZE_PATH", "").strip()
+    return Path(valore) if valore else PERCORSO_PREFERENZE_PREDEFINITO
+
+
+def crea_server(
+    archivio: ArchivioNote,
+    client_http: httpx.Client | None = None,
+    percorso_preferenze: str | Path | None = None,
+) -> FastMCP:
+    """Server MCP con note, meteo e la resource delle preferenze.
+
+    `client_http` serve ai test per simulare Open-Meteo; `percorso_preferenze` per usare un file temporaneo.
+    """
     server = FastMCP("note")
     client_meteo = client_http or httpx.Client(timeout=METEO_TIMEOUT)
+    file_preferenze = Path(percorso_preferenze) if percorso_preferenze is not None else PERCORSO_PREFERENZE_PREDEFINITO
+
+    @server.resource(
+        "utente://preferenze",
+        mime_type="application/json",
+        description="Preferenze dell'utente (lingua, fuso orario predefinito, stile delle risposte), lette dal file.",
+    )
+    def preferenze() -> str:
+        """Testo del file così com'è, riletto a ogni richiesta; nessun valore predefinito (spec Step 4 §5.3)."""
+        try:
+            # utf-8-sig: tollera il BOM di Blocco note e PowerShell 5.1.
+            testo = file_preferenze.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError) as errore:
+            causa = f"{file_preferenze}: {getattr(errore, 'strerror', None) or errore}"
+            logger.warning("resource utente://preferenze non disponibile: %s", causa)
+            raise ResourceError(causa) from errore
+        logger.info("resource utente://preferenze letta da %s", file_preferenze)
+        return testo
 
     @server.tool(
         description=(
@@ -103,8 +138,11 @@ def main() -> int:
         print("MCP_PORT deve essere un numero intero", file=sys.stderr)
         return 1
     Path(percorso).parent.mkdir(parents=True, exist_ok=True)
-    logger.info("server MCP delle note su http://%s:%s/mcp (archivio %s)", host, porta, percorso)
-    server = crea_server(ArchivioNote(percorso))
+    preferenze = percorso_preferenze()
+    logger.info(
+        "server MCP delle note su http://%s:%s/mcp (archivio %s, preferenze %s)", host, porta, percorso, preferenze
+    )
+    server = crea_server(ArchivioNote(percorso), percorso_preferenze=preferenze)
     asyncio.run(server.run_http_async(host=host, port=porta, path="/mcp", show_banner=False))
     return 0
 

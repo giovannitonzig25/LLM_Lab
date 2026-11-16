@@ -1,4 +1,4 @@
-"""Ponte sincrono sopra il client FastMCP: discovery e invocazione degli strumenti MCP.
+"""Ponte sincrono sopra il client FastMCP: discovery e invocazione degli strumenti MCP, lettura delle resource.
 
 Chiamate FastMCP 4.1.6 effettivamente usate (verificate in T1/T2):
 - `Client(url, timeout=<s>)` come `async with`; `await client.list_tools()` restituisce
@@ -7,6 +7,8 @@ Chiamate FastMCP 4.1.6 effettivamente usate (verificate in T1/T2):
 - `await client.call_tool(nome, argomenti)`: restituisce un risultato con `content`
   (blocchi di testo); uno strumento che fallisce o argomenti non validi sollevano
   `fastmcp.exceptions.ToolError`; una connessione impossibile solleva `RuntimeError`.
+- `await client.read_resource(uri)` (Step 4, verificata il 2026-11-16): lista di contenuti con `.text`;
+  un errore del server arriva come `MCPError`.
 Nome, descrizione e schema non sono mai scritti a mano qui: arrivano da `list_tools()`.
 """
 
@@ -195,3 +197,22 @@ def scopri_strumenti(
         )
     LOG.info("strumenti scoperti su %s: %s", url, [s.name for s in strumenti])
     return strumenti
+
+
+async def _leggi(url: str, uri: str, timeout: float) -> str:
+    async with asyncio.timeout(timeout):
+        async with Client(url, timeout=timeout) as client:
+            contenuti = await client.read_resource(uri)
+    for contenuto in contenuti:
+        testo = getattr(contenuto, "text", None)
+        if testo is not None:
+            return testo
+    raise ValueError("nessun contenuto testuale nella resource")
+
+
+def leggi_resource(url: str, uri: str, timeout: float = 10.0) -> str:
+    """Legge una resource MCP decisa dall'host (Step 4). Non è uno strumento: non passa mai a `bind_tools`."""
+    try:
+        return _esegui(_leggi(url, uri, timeout))
+    except Exception as errore:
+        raise ErroreMcp(f"lettura di {uri} impossibile su {url}: {_testo_errore(errore)}") from errore

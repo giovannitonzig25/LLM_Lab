@@ -93,7 +93,7 @@ def config_con(**extra):
 
 
 def test_compone_locali_piu_mcp():
-    strumenti, avvisi = componi_strumenti(
+    strumenti, _, avvisi = componi_strumenti(
         config_con(), scopri=lambda url, timeout, chiedi_conferma=None: [strumento_mcp_finto]
     )
 
@@ -105,7 +105,7 @@ def test_avvio_ridotto_con_avviso():
     def scopri(url, timeout, chiedi_conferma=None):
         raise ErroreMcp("giù")
 
-    strumenti, avvisi = componi_strumenti(config_con(MCP_URL="http://x:1/mcp"), scopri=scopri)
+    strumenti, _, avvisi = componi_strumenti(config_con(MCP_URL="http://x:1/mcp"), scopri=scopri)
 
     assert nomi(strumenti) == [*NOMI_LOCALI, *NOMI_HTTP]
     assert len(avvisi) == 1
@@ -124,7 +124,7 @@ def test_attesa_all_avvio_server_in_ritardo():
             raise ErroreMcp("non ancora")
         return [strumento_mcp_finto]
 
-    strumenti, avvisi = componi_strumenti(
+    strumenti, _, avvisi = componi_strumenti(
         config_con(MCP_ATTESA_AVVIO="20"), scopri=scopri,
         dormi=orologio_finto.dormi, adesso=orologio_finto.adesso,
     )
@@ -142,7 +142,7 @@ def test_attesa_scaduta():
         tentativi.append(1)
         raise ErroreMcp("giù")
 
-    strumenti, avvisi = componi_strumenti(
+    strumenti, _, avvisi = componi_strumenti(
         config_con(MCP_ATTESA_AVVIO="3"), scopri=scopri,
         dormi=orologio_finto.dormi, adesso=orologio_finto.adesso,
     )
@@ -194,3 +194,74 @@ def test_chiedi_conferma_viene_inoltrata_alla_discovery():
     componi_strumenti(config_con(), scopri=scopri)
 
     assert viste == [conferma, None]
+
+
+# --- Step 4: orologio con il fuso delle preferenze ---
+from assistente.preferenze import PREFERENZE_PREDEFINITE, Preferenze
+from assistente.strumenti import AVVISO_MCP, crea_orologio
+
+NEW_YORK = Preferenze("inglese", "America/New_York", "dettagliato")
+
+
+def test_crea_orologio_senza_argomenti_usa_il_fuso():
+    assert "(America/New_York, UTC-0" in crea_orologio("America/New_York").invoke({})
+    assert leggi_orologio(None, lambda: datetime(2026, 11, 16, 10, 0, 0, tzinfo=UTC), predefinito="America/New_York") == (
+        "2026-11-16 05:00:00 (America/New_York, UTC-05:00)"
+    )
+
+
+def test_crea_orologio_con_altro_fuso():
+    assert "Asia/Tokyo" in crea_orologio("America/New_York").invoke({"timezone": "Asia/Tokyo"})
+
+
+def test_crea_orologio_descrizione_e_schema():
+    strumento = crea_orologio("America/New_York")
+
+    assert strumento.name == "orologio"
+    assert "timezone" in strumento.args
+    assert "se omesso si usa America/New_York" in strumento.description
+
+
+def test_ordine_discovery_preferenze_orologio():
+    ordine = []
+
+    def scopri(url, timeout, chiedi_conferma=None):
+        ordine.append("scopri")
+        return [strumento_mcp_finto]
+
+    def carica():
+        ordine.append("preferenze")
+        return NEW_YORK
+
+    strumenti, preferenze, avvisi = componi_strumenti(config_con(), scopri=scopri, carica_preferenze=carica)
+
+    assert ordine == ["scopri", "preferenze"]
+    assert preferenze == NEW_YORK and avvisi == []
+    assert nomi(strumenti) == [*NOMI_LOCALI, *NOMI_HTTP, "strumento_mcp_finto"]
+    assert "America/New_York" in strumenti[0].invoke({})
+
+
+def test_discovery_fallita_carica_comunque_le_preferenze():
+    chiamate = []
+
+    def scopri(url, timeout, chiedi_conferma=None):
+        raise ErroreMcp("giù")
+
+    def carica():
+        chiamate.append(1)
+        return NEW_YORK
+
+    strumenti, preferenze, avvisi = componi_strumenti(
+        config_con(MCP_URL="http://x:1/mcp", MCP_ATTESA_AVVIO="0"), scopri=scopri, carica_preferenze=carica
+    )
+
+    assert chiamate == [1] and preferenze == NEW_YORK
+    assert avvisi == [AVVISO_MCP.format(url="http://x:1/mcp")]
+    assert nomi(strumenti) == [*NOMI_LOCALI, *NOMI_HTTP]
+
+
+def test_senza_carica_preferenze_usa_i_predefiniti():
+    strumenti, preferenze, _ = componi_strumenti(config_con(), scopri=lambda url, timeout, chiedi_conferma=None: [])
+
+    assert preferenze == PREFERENZE_PREDEFINITE
+    assert "Europe/Rome" in strumenti[0].invoke({})

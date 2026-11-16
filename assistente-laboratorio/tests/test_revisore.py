@@ -560,7 +560,9 @@ def test_nuova_domanda_dopo_turno_corretto():
     _, testo = esegui_turno(grafo, sessione, "Grazie, e domani?", 6, max_revisioni=1)
 
     assert testo == "FINALE-2"
-    ricevuti = modello.chiamate[-1]
+    # Step 4 (spec §10.1): in testa c'è sempre il SystemMessage delle preferenze; la cronologia segue.
+    sistema, *ricevuti = modello.chiamate[-1]
+    assert type(sistema).__name__ == "SystemMessage"
     assert [type(m).__name__ for m in ricevuti] == ["HumanMessage", "AIMessage", "ToolMessage", "AIMessage", "HumanMessage"]
     assert [ricevuti[0].text, ricevuti[3].text, ricevuti[4].text] == [DOMANDA_DUE_PARTI, "FINALE-1", "Grazie, e domani?"]
     [prompt_router] = classificatore.chiamate[-1]
@@ -579,7 +581,9 @@ def test_due_turni_corretti_di_fila():
     sessione, _ = esegui_turno(grafo, sessione, "d2", 6, max_revisioni=1)
     esegui_turno(grafo, sessione, "d3", 6, max_revisioni=1)
 
-    ricevuti = modello.chiamate[-1]
+    # Step 4 (spec §10.1): in testa c'è sempre il SystemMessage delle preferenze; la cronologia segue.
+    sistema, *ricevuti = modello.chiamate[-1]
+    assert type(sistema).__name__ == "SystemMessage"
     assert not any(e_osservazione(m) for m in ricevuti)
     assert [m.text for m in ricevuti] == ["d1", "FINALE-1", "d2", "FINALE-2", "d3"]
 
@@ -593,7 +597,9 @@ def test_turno_precedente_al_limite_resta_intero():
     esegui_turno(grafo, sessione, "d2", 6, max_revisioni=1)
 
     assert testo == "ULTIMA"
-    assert [m.text for m in modello.chiamate[-1]] == ["d1", "ULTIMA", "d2"]
+    # Step 4 (spec §10.1): in testa c'è sempre il SystemMessage delle preferenze; la cronologia segue.
+    assert type(modello.chiamate[-1][0]).__name__ == "SystemMessage"
+    assert [m.text for m in modello.chiamate[-1][1:]] == ["d1", "ULTIMA", "d2"]
 
 
 # --- Errori del Revisore, fail-open e log (Task 7) ---
