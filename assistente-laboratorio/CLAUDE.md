@@ -44,16 +44,19 @@ Un'applicazione da terminale in Python che conversa con un modello locale e:
 
 ## Metodo: Superpowers
 
-- Usare le skill di Superpowers per brainstorming, specifica, piano, implementazione e verifica.  
-- Non scrivere codice prima che io abbia approvato la specifica e poi il piano.  
-- Salvare specifica e piano in `assistente-laboratorio/docs/superpowers/`.  
-- Procedere per incrementi piccoli, ciascuno verificato prima del commit.
+Workflow rapido (dal 2026-11-17), solo quattro fasi:
+
+- **Brainstorming:** requisiti della slide e solo le decisioni davvero necessarie; niente microdecisioni o lunghe discussioni su casi limite; sempre la soluzione più semplice compatibile con il progetto.  
+- **Specifica:** sintetica, con le decisioni approvate, da sottopormi; niente review indipendenti o esperimenti esplorativi.  
+- **Piano:** pochi task concreti e ordinati, nessun task dedicato solo a test, benchmark, spike o review; attendere la mia approvazione.  
+- **Implementazione:** solo i task approvati, senza funzionalità non richieste. Un errore concreto si corregge senza nuovo brainstorming.  
+- Non scrivere codice prima che io abbia approvato la specifica e poi il piano. Salvare specifica e piano in `assistente-laboratorio/docs/superpowers/`.  
+- Esclusi: spike sul modello locale, prove ripetute con il modello per ogni scenario, review indipendenti obbligatorie, fasi separate di test e validazione, benchmark, lunghi cicli di correzione dei prompt, documentazione dettagliata dei casi limite.
 
 ## Test e verifiche
 
-- Test automatici ripetibili che non richiedono un modello attivo (grafo, cronologia, instradamento, strumento con istante controllato).  
-- Prove reali con LM Studio e con Docker tenute separate e attivate esplicitamente.  
-- Una risposta simulata non dimostra che il modello locale sappia usare lo strumento.  
+- TDD non obbligatorio e nessuna nuova suite per ogni modifica; la suite esistente (senza modello attivo) resta e non va rotta.  
+- Verifica limitata a un controllo funzionale essenziale: il codice parte e la funzione principale è utilizzabile; niente batterie di test ripetute né lunghe prove con il modello locale.  
 - Nel resoconto indicare che cosa è stato eseguito, con quale esito, e che cosa resta da provare.
 
 ## Git
