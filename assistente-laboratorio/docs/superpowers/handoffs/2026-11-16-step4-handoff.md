@@ -7,8 +7,8 @@ Documento per avviare lo Step 4 in una nuova sessione Claude Code. Va letto per 
 ## 1. Stato del progetto (verificato alla scrittura)
 
 - **Repository:** `repo-lab-llm`, progetto in `assistente-laboratorio/`. Le altre cartelle sono altre lezioni: non leggerle per copiarne il codice e non modificarle.
-- **Ramo:** `dev`, allineato a `origin/dev` dopo il push dello Step 3. Nessun ramo di lavoro aperto. `main` invariato (`9a6c073`).
-- **Ultimo commit dello Step 3:** `c975c41` Merge branch 'feat/riassunto' into dev. Sopra ci sono i commit di questo handoff, `eaeb230` (stesura) e `8c52e12` (conferma dell'obiettivo), più quello che ne allinea i riferimenti, tutti **non pushati**.
+- **Ramo:** `dev`, allineato a `origin/dev`. Nessun ramo di lavoro aperto. `main` invariato (`9a6c073`).
+- **Ultimo commit dello Step 3:** `c975c41` Merge branch 'feat/riassunto' into dev. Sopra ci sono soltanto commit `docs:` di questo handoff: `eaeb230` (stesura), `8c52e12` (conferma dell'obiettivo), `d4ed6c5` (riferimenti ai commit) e quello che aggiorna questo paragrafo. Sono **tutti pushati** su `origin/dev`.
 - **Test:** **636 verdi** su `dev` (`.\.venv\Scripts\python.exe -m pytest -q`).
 - **Non tracciato:** `../LLM_Lez_6.pdf`, materiale del corso, **mai** in Git.
 - **Step completati della Lezione 6** (specifiche e piani in `docs/superpowers/`, prove reali in `prove_reali/PROVE.md`):
@@ -133,6 +133,6 @@ START → riassunto → router ─┬─ conversazione → modello ─┬─ too
 
 ## 7. Prossima azione
 
-1. Leggere questo handoff e `CLAUDE.md`. Verificare `git status`, `git log -4` (attesi i tre commit di questo handoff sopra `c975c41`) e la suite (636 verdi).
+1. Leggere questo handoff e `CLAUDE.md`. Verificare `git status`, `git log -5` (attesi i quattro commit di questo handoff sopra `c975c41`, vedi §1) e la suite (636 verdi).
 2. L'obiettivo dello Step 4 è confermato (vedi §2): non serve rileggere la slide.
 3. Avviare `superpowers:brainstorming`, poi specifica e piano da sottoporre all'utente. Solo dopo, con autorizzazione, il ramo `feat/<nome>` da `dev`.
