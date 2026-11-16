@@ -526,7 +526,7 @@ Prove reali con LM Studio (`google/gemma-4-e2b`, contesto 8192 token) e Docker D
 
 | # | Atteso | Effettivo | Esito |
 |---|---|---|---|
-| 1 | Nome dato al turno 1, «Come mi chiamo?» dopo la compressione → risposta corretta | Compressione `messaggi 11 → 9` (6,8–7,7 s), poi Router `fuori_ambito` («richiesta informazione personale»): rifiuto fisso, agente non eseguito | **fallita** (Router) |
+| 1 | Nome dato al turno 1, «Come mi chiamo?» dopo la compressione → risposta corretta | Compressione `messaggi 11 → 9` (7,7 s), poi Router `fuori_ambito` («richiesta informazione personale»): rifiuto fisso, agente non eseguito | **fallita** (Router) |
 | 2 | Sotto la soglia nessuna chiamata al riassuntore | Log «soglia non superata (messaggi=1, 3, 5)» e, oltre la soglia senza turni da togliere, «nessun turno eliminabile (messaggi=7, turni completi=2)»: nessuna chiamata | **riuscita** |
 | 3 | Informazione presente solo nel riassunto usata in una continuazione | «E se fossimo 10 persone…?» → Router `conversazione`, `calcola("400 / 10")`, Revisore coerente. Ma «400» era anche nel turno 2 conservato («Quanto fa 400 diviso 8?»): la memoria riassunta non è isolata | **verifica incompleta** (isolata poi nello spike, scenario C1: 3/3) |
 | 4 | Valore cambiato di recente prevale sul riassunto in Router, agente e Revisore | Router `conversazione`; agente `calcola("500 / 10")` = 50 (valore recente); **Revisore `coerente=false` sulla risposta corretta**, correzione, poi approvata | **parziale** (Revisore) |
