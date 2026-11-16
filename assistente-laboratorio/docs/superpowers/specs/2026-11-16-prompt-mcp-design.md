@@ -340,6 +340,10 @@ Un revisore indipendente ha confrontato la specifica con il codice (`terminale.p
 1. `shlex.split` fallisce sugli apostrofi italiani non quotati (`argomento=dell'MCP` → «No closing quotation»). **Deciso dall'utente:** `shlex` con le sole virgolette doppie e senza escape (§7.2).
 2. §7.1 si contraddiceva su `/prompts x`: corretto, il messaggio è «Uso: /prompts».
 
+### 17.1 Prove reali: primo tentativo su A.2 (2026-11-16, approvato dall'utente)
+
+In R4 (`SOGLIA_RIASSUNTO=4`) il riassunto finale ometteva il turno compresso, presente solo nel riassunto del `SystemMessage`. Primo tentativo (regola pragmatica, al massimo 2): la frase «Basati sul riassunto della conversazione precedente, se è presente, e sui messaggi che precedono questa richiesta.» dell'Appendice A.2 è sostituita da quella attuale, che chiede esplicitamente di includere i turni compresi.
+
 ## 18. Lasciato al costruttore
 
 - Nomi interni delle funzioni ausiliarie e organizzazione dei test.
@@ -362,5 +366,5 @@ Spiega l'argomento «{argomento}» a livello {livello}. {guida_livello} Per ques
 ### A.2 `riassumi_conversazione`
 
 ```text
-Riassumi la nostra conversazione di questa sessione fino a questo momento, in questo stile: {stile}. Basati sul riassunto della conversazione precedente, se è presente, e sui messaggi che precedono questa richiesta. Riporta solo ciò che è stato davvero detto o fatto, compresi i risultati degli strumenti, senza aggiungere informazioni nuove. Non serve usare strumenti. Se non ci sono ancora turni da riassumere, dillo in una frase. Per questa risposta lo stile richiesto prevale sullo stile indicato nelle preferenze.
+Riassumi la nostra conversazione di questa sessione fino a questo momento, in questo stile: {stile}. Includi sia i turni compresi nel riassunto della conversazione precedente, che trovi nelle istruzioni di sistema se è presente, sia i messaggi che precedono questa richiesta: il riassunto contiene i primi turni della sessione e vanno riportati anche quelli. Riporta solo ciò che è stato davvero detto o fatto, compresi i risultati degli strumenti, senza aggiungere informazioni nuove. Non serve usare strumenti. Se non ci sono ancora turni da riassumere, dillo in una frase. Per questa risposta lo stile richiesto prevale sullo stile indicato nelle preferenze.
 ```

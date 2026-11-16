@@ -41,7 +41,9 @@ GUIDE_LIVELLO = {
 }
 TESTO_RIASSUMI = (
     "Riassumi la nostra conversazione di questa sessione fino a questo momento, in questo stile: {stile}. "
-    "Basati sul riassunto della conversazione precedente, se è presente, e sui messaggi che precedono questa richiesta. "
+    "Includi sia i turni compresi nel riassunto della conversazione precedente, che trovi nelle istruzioni di sistema "
+    "se è presente, sia i messaggi che precedono questa richiesta: il riassunto contiene i primi turni della sessione "
+    "e vanno riportati anche quelli. "
     "Riporta solo ciò che è stato davvero detto o fatto, compresi i risultati degli strumenti, "
     "senza aggiungere informazioni nuove. Non serve usare strumenti. "
     "Se non ci sono ancora turni da riassumere, dillo in una frase. "
