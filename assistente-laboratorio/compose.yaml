@@ -6,10 +6,15 @@ services:
       MCP_HOST: 0.0.0.0
       MCP_PORT: "8001"
       NOTE_DB_PATH: /data/note.db
+      # Resource utente://preferenze: file dell'host, modificabile senza ricostruire l'immagine.
+      PREFERENZE_PATH: /preferenze/preferenze.json
       # Usato solo dal controllo di salute (dentro il container).
       MCP_URL: http://localhost:8001/mcp
     volumes:
       - dati-note:/data
+      # Cartella e non singolo file: se il file manca Docker non crea una cartella al suo posto,
+      # e le modifiche salvate da qualunque editor si vedono subito (sola lettura).
+      - ./data:/preferenze:ro
     ports:
       - "127.0.0.1:8001:8001"
     healthcheck:
