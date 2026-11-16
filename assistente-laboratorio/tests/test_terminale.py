@@ -6,6 +6,7 @@ from assistente.grafo import costruisci_grafo
 from assistente.config import SOGLIA_RIASSUNTO_PREDEFINITA
 from finti import riassuntore_inerte
 from assistente.terminale import esegui_chat, Sessione, esegui_turno
+from assistente.preferenze import PREFERENZE_PREDEFINITE
 from finti import AMBITO_TEST, ModelloSimulato, approva_sempre, in_ambito
 
 
@@ -148,7 +149,8 @@ def test_main_scrive_gli_avvisi_su_stderr_e_continua(monkeypatch, capsys):
     monkeypatch.setenv("LM_STUDIO_MODEL", "m")
     monkeypatch.setenv("AMBITO_AGENTE", "a")
     monkeypatch.setattr(
-        terminale, "componi_strumenti", lambda config, chiedi_conferma=None: ([], ["AVVISO: server MCP assente"])
+        terminale, "componi_strumenti",
+        lambda config, chiedi_conferma=None, carica_preferenze=None: ([], PREFERENZE_PREDEFINITE, ["AVVISO: server MCP assente"]),
     )
     monkeypatch.setattr(terminale, "crea_classificatore", lambda config: in_ambito())
     monkeypatch.setattr(terminale, "crea_revisore", lambda config: approva_sempre())
@@ -274,3 +276,35 @@ def test_input_con_surrogato_isolato_qualsiasi_non_interrompe_la_sessione():
 
     assert any("ok" in riga for riga in stampato)
     modello.chiamate[0][-1].content.encode("utf-8")
+
+
+# --- Step 4: le preferenze arrivano all'orologio; la resource non passa a bind_tools ---
+def test_main_bind_tools_senza_resource(monkeypatch, tmp_path):
+    file_preferenze = tmp_path / "preferenze.json"
+    file_preferenze.write_text('{"lingua": "inglese", "fuso_orario": "America/New_York", "stile": "dettagliato"}', encoding="utf-8")
+    registrati = []
+
+    def crea_modello_finto(config, strumenti):
+        registrati.extend(strumenti)
+        return ModelloSimulato([AIMessage("Ciao!")])
+
+    with avvia_server_mcp(crea_server(ArchivioNote(str(tmp_path / "note.db")), percorso_preferenze=file_preferenze)) as url:
+        monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
+        monkeypatch.setenv("LM_STUDIO_MODEL", "m")
+        monkeypatch.setenv("AMBITO_AGENTE", "a")
+        monkeypatch.setenv("MCP_URL", url)
+        monkeypatch.setattr(terminale, "crea_classificatore", lambda config: in_ambito())
+        monkeypatch.setattr(terminale, "crea_revisore", lambda config: approva_sempre())
+        monkeypatch.setattr(terminale, "crea_modello", crea_modello_finto)
+        righe = iter(["salve", "esci"])
+        monkeypatch.setattr("builtins.input", lambda prompt="": next(righe))
+        assert terminale.main() == 0
+
+    nomi = [s.name for s in registrati]
+    assert nomi == [
+        "orologio", "converti_unita", "calcola",
+        "giorni_lavorativi", "calcola_scadenza", "cerca_catalogo", "dettaglio_catalogo",
+        "aggiungi_nota", "elenca_note", "elimina_nota", "meteo",
+    ]
+    assert not any("utente://" in s.description or "preferenze" in s.name for s in registrati)
+    assert "America/New_York" in registrati[0].invoke({})
