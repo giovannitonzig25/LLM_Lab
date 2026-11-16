@@ -38,6 +38,7 @@ Lo script elenca gli identificativi restituiti da `GET /v1/models` ed esce con e
 | `AMBITO_AGENTE` | ambito dell'agente in una riga, al massimo 500 caratteri (obbligatoria): lo usa il Router per classificare le domande e compare nel messaggio di rifiuto. Chi aggiorna da una versione precedente deve aggiungere la riga al proprio `.env` (il valore di esempio è in `.env.example`), altrimenti il programma non parte |
 | `MAX_PASSAGGI` | budget di passaggi di ogni tentativo dell'agente, predefinito 6 (vedi «Limite di passaggi») |
 | `MAX_REVISIONI` | correzioni che il Revisore può chiedere all'agente per ogni domanda, intero ≥ 0, predefinito 1. Con 0 il Revisore giudica comunque ogni risposta (e aggiunge la sua latenza), ma non chiede mai correzioni |
+| `SOGLIA_RIASSUNTO` | numero di messaggi oltre il quale i turni più vecchi vengono riassunti (vedi «Riassunto della cronologia»), intero ≥ 1, predefinito 20; vuota vale 20, altri valori fermano l'avvio con un errore che nomina la variabile |
 | `MCP_URL` | indirizzo del server MCP delle note, predefinito `http://localhost:8001/mcp` |
 | `MCP_TIMEOUT` | secondi massimi per discovery e invocazione MCP (> 0), predefinito 10 |
 | `MCP_ATTESA_AVVIO` | secondi di attesa all'avvio perché il server MCP risponda (≥ 0), predefinito 0 in locale e 20 in Compose |
@@ -94,7 +95,7 @@ La cronologia vale per la sessione: dentro la stessa esecuzione il modello ricor
 
 ## Avvio con Docker Compose
 
-LM Studio resta sull'host; nel container l'indirizzo è `http://host.docker.internal:1234/v1` (Compose lo imposta al posto di quello di `.env`; per un'altra porta o indirizzo definisci `LM_STUDIO_DOCKER_URL` in `.env`). `LM_STUDIO_MODEL`, `MAX_PASSAGGI` e `MAX_REVISIONI` vengono da `.env`.
+LM Studio resta sull'host; nel container l'indirizzo è `http://host.docker.internal:1234/v1` (Compose lo imposta al posto di quello di `.env`; per un'altra porta o indirizzo definisci `LM_STUDIO_DOCKER_URL` in `.env`). `LM_STUDIO_MODEL`, `MAX_PASSAGGI`, `MAX_REVISIONI` e `SOGLIA_RIASSUNTO` vengono da `.env`.
 
 ```powershell
 docker compose build
@@ -228,20 +229,49 @@ WARNING assistente.revisore: revisore: non disponibile (APIConnectionError), ris
 
 Il motivo nei log è troncato a 120 caratteri, su una riga; non compaiono mai la domanda, la risposta, il contesto né l'output grezzo del modello.
 
+## Riassunto della cronologia
+
+All'inizio di ogni domanda un nodo **Riassunto** controlla la lunghezza della cronologia, prima del Router:
+
+```
+START → riassunto → router ─┬─ conversazione → modello ⇄ strumenti … → revisore → …   (come sopra)
+                            └─ fuori_ambito → rifiuto → END
+```
+
+- **Quando comprime:** solo se i messaggi della sessione, contata anche la domanda appena scritta, sono **più** di `SOGLIA_RIASSUNTO` (si contano tutti: richieste e risultati degli strumenti, bozze e osservazioni del Revisore) **e** oltre gli ultimi 2 turni completi c'è almeno un turno da togliere. Altrimenti il modello riassuntore non viene chiamato.
+- **Che cosa conserva:** gli ultimi **2 turni completi** e la domanda attuale restano intatti; i turni precedenti escono dalla cronologia e vengono sostituiti da un **riassunto aggiornato**, non accumulato: ogni compressione unisce il riassunto precedente e i turni che escono. Il taglio cade sempre all'inizio di una domanda dell'utente, quindi una richiesta di strumento non viene mai separata dal suo risultato.
+- **Il riassuntore:** stesso server e modello, client separato senza strumenti, `temperature=0`, `reasoning_effort="none"`, al massimo 768 token. Riceve la trascrizione dei soli turni che escono (risultati degli strumenti troncati a 1000 caratteri, bozze e osservazioni omesse) e scrive sei sezioni: Obiettivo, Informazioni e vincoli, Preferenze, Decisioni aggiornate, Risultati utili, Questioni aperte.
+- **Chi lo usa:** l'agente lo riceve come messaggio di sistema temporaneo (mai salvato nella cronologia, mai contato per la soglia); Router e Revisore lo vedono in una sezione del prompt prima dei turni precedenti. Tutti e tre sono avvisati che è contesto e non una richiesta, e che le informazioni più recenti prevalgono. Senza riassunto i prompt sono identici a quelli precedenti.
+- **Errori del riassuntore** (server non raggiungibile, risposta vuota o troncata): nessuna compressione, il riassunto precedente resta, la domanda prosegue normalmente (*fail-open*) e nei log compare un `WARNING`. Alla domanda successiva si riprova.
+- **Turno atomico:** se la domanda fallisce (limite di passaggi, server non raggiungibile durante il Router o l'agente) la sessione torna esattamente com'era, riassunto compreso; una compressione fatta in quel turno si ripete alla domanda successiva.
+- La memoria vale solo per la sessione: all'uscita cronologia e riassunto si perdono.
+
+Nei log su stderr (logger `assistente.riassunto`; esempi del formato, non esiti misurati):
+
+```
+INFO assistente.riassunto: riassunto: soglia non superata (messaggi=5, soglia=20), nessuna chiamata
+INFO assistente.riassunto: riassunto: nessun turno eliminabile (messaggi=9, soglia=6, turni completi=2), nessuna chiamata
+INFO assistente.riassunto: riassunto: compressi 1 turni, messaggi 7 → 5, durata=12.3s
+WARNING assistente.riassunto: riassunto: errore APIConnectionError, nessuna compressione durata=2.1s
+WARNING assistente.riassunto: riassunto: output non valido (troncato (finish_reason=length)), nessuna compressione durata=30.4s
+```
+
+Nei log non compaiono mai testi dell'utente, degli strumenti, del riassunto o del modello, né il testo delle eccezioni.
+
 ## Limite di passaggi
 
 Il limite di LangGraph (`recursion_limit`) per ogni domanda è:
 
 ```
-1 (Router) + (MAX_REVISIONI + 1) × (MAX_PASSAGGI + 1 (Revisore))
+1 (Riassunto) + 1 (Router) + (MAX_REVISIONI + 1) × (MAX_PASSAGGI + 1 (Revisore))
 ```
 
-Con i valori predefiniti (6 e 1) è 15; con `MAX_REVISIONI=0` è 8. `MAX_PASSAGGI` è quindi il **budget nominale di ogni tentativo** dell'agente, non un limite rigido per tentativo: il limite è unico per tutta la domanda, e un tentativo può usare anche il margine non speso dagli altri.
+Il Riassunto usa un passaggio a ogni domanda, anche quando non comprime. Con i valori predefiniti (6 e 1) il limite è 16; con `MAX_REVISIONI=0` è 9. `MAX_PASSAGGI` è quindi il **budget nominale di ogni tentativo** dell'agente, non un limite rigido per tentativo: il limite è unico per tutta la domanda, e un tentativo può usare anche il margine non speso dagli altri.
 
 Valori misurati con modelli simulati (LangGraph 1.2.19), fissati da `test_caratterizza_il_limite_di_passaggi` e dai test del limite in `tests/test_revisore.py`:
 
-- **Ciclo infinito di strumenti** (il modello chiede sempre lo strumento): con i predefiniti il modello è chiamato 7 volte e lo strumento eseguito 7 volte prima dell'interruzione (nello Step 1 erano 3 e 3); con `MAX_PASSAGGI=2` 3 e 3; con `MAX_REVISIONI=0` 4 e 3 (`MAX_PASSAGGI=6`) oppure 2 e 1 (`MAX_PASSAGGI=2`).
-- **Turni riusciti:** con il limite 15 un turno può usare al massimo 14 passaggi; un turno con giudizio finale ne usa sempre un numero dispari, quindi al massimo 13. Per esempio 3 giri di strumenti, una correzione con 1 giro e i due giudizi (13) si completano; con 2 giri nella correzione (15) il turno si interrompe, anche se il Revisore era già stato chiamato due volte.
+- **Ciclo infinito di strumenti** (il modello chiede sempre lo strumento): con i predefiniti il modello è chiamato 7 volte e lo strumento eseguito 7 volte prima dell'interruzione (nello Step 1 erano 3 e 3; invariati con il Riassunto, perché il suo passaggio è compensato dalla formula); con `MAX_PASSAGGI=2` 3 e 3; con `MAX_REVISIONI=0` 4 e 3 (`MAX_PASSAGGI=6`) oppure 2 e 1 (`MAX_PASSAGGI=2`).
+- **Turni riusciti:** con il limite 16 un turno può usare al massimo 15 passaggi; un turno con giudizio finale ne usa sempre un numero pari, quindi al massimo 14. Per esempio 3 giri di strumenti, una correzione con 1 giro e i due giudizi (14) si completano; con 2 giri nella correzione (16) il turno si interrompe, anche se il Revisore era già stato chiamato due volte.
 - **Valori piccoli:**
 
   | `MAX_PASSAGGI` | `MAX_REVISIONI` | risposta senza strumenti | un giro di strumento | una correzione senza strumenti |
@@ -253,7 +283,7 @@ Valori misurati con modelli simulati (LangGraph 1.2.19), fissati da `test_caratt
   | 3 | 0 | completata | interrotta | — |
   | 3 | 1 | completata | completata | completata |
 
-  Con `MAX_PASSAGGI=1` nessuna correzione rientra nel limite. Il rifiuto del Router usa 2 passaggi e si completa con qualunque valore.
+  La tabella è invariata con il Riassunto. Con `MAX_PASSAGGI=1` nessuna correzione rientra nel limite. Il rifiuto del Router usa 3 passaggi (Riassunto, Router, rifiuto) e si completa con qualunque valore.
 
 Quando il limite è raggiunto il turno viene scartato: la cronologia torna a com'era prima della domanda, compare un messaggio («La richiesta non è stata completata: raggiunto il limite di N passaggi…», dove N è `MAX_PASSAGGI`) e la chat continua. È un caso diverso dal limite di revisioni, che invece restituisce l'ultima risposta.
 
@@ -261,6 +291,7 @@ Quando il limite è raggiunto il turno viene scartato: la cronologia torna a com
 
 ```
 src/assistente/   config, modello (LM Studio), grafo (LangGraph), terminale
+                  riassunto (Riassunto della cronologia: turni, trascrizione, prompt, nodo)
                   router (Router di ambito: contesto, prompt, rifiuto)
                   revisore (Revisore della risposta: giudizio, osservazione, contesto dell'agente)
                   strumenti (orologio e composizione), unita, calcolatrice
@@ -281,7 +312,18 @@ docs/superpowers/ specifica e piano
 - **Revisore e dati:** il Revisore controlla coerenza e completezza, non l'esattezza: una risposta completa ma sbagliata (nelle prove, 15 per 7 calcolato come 15/7) viene approvata. Il motivo che l'agente riceve può essere impreciso, e a volte il Revisore esce dal suo criterio (ha respinto un calcolo sbagliato).
 - **Azioni ripetute durante una correzione:** l'agente può richiamare uno strumento già eseguito nel turno. Per gli strumenti che leggono costa solo tempo; con `aggiungi_nota` può creare una nota duplicata, perché il modello può ignorare l'avvertenza dell'osservazione. Non esiste un blocco automatico; `elimina_nota` resta protetto dalla conferma nel terminale.
 - **Errori del Revisore:** se il giudizio non è valido o il server non risponde, la risposta arriva senza revisione e può essere incompleta (`WARNING` nei log).
-- **Cronologia:** con le correzioni la cronologia della sessione cresce (al massimo una risposta scartata e un'osservazione per domanda con il predefinito).
+- **Cronologia:** con le correzioni la cronologia della sessione cresce (al massimo una risposta scartata e un'osservazione per domanda con il predefinito), finché il Riassunto non toglie i turni vecchi.
+- **Riassunto: soglia in messaggi.** La soglia conta messaggi, non token, e non garantisce di restare nella finestra di contesto del modello (8192 token per `google/gemma-4-e2b`).
+- **Riassunto a ogni turno (caso A1):** se gli ultimi 2 turni da soli superano la soglia (turni lunghi con molti strumenti, o soglia molto bassa), il riassunto può essere aggiornato a ogni domanda, con la latenza relativa.
+- **Messaggi eliminati non recuperabili:** dei turni tolti resta solo ciò che il riassunto ha catturato.
+- **Fail-open ripetuto:** se il riassuntore fallisce più volte di seguito la cronologia continua a crescere e può superare la finestra di contesto; non c'è altro meccanismo di riserva.
+- **Elenchi lunghi:** i risultati degli strumenti oltre 1000 caratteri arrivano al riassuntore troncati; anche un risultato intero può perdere singoli elementi (negli esperimenti una nota in fondo a un elenco di 25 non è stata conservata nemmeno senza troncamento). La fonte autorevole resta lo strumento, che si può interrogare di nuovo.
+- **Risultati storici superati:** il riassunto può conservare risultati legati a decisioni poi cambiate (per esempio un conteggio di giorni fino a una scadenza spostata) senza segnarli come superati.
+- **Qualità del riassunto:** con un modello da 2B lo stile non è sempre pulito (sintassi della trascrizione ricopiata, «Nessuno»/«nessuna» alternati); non c'è verifica dei fatti, e un errore entrato nel riassunto si propaga alle compressioni successive. Il prompt è stato validato su 5 scenari, e a `temperature=0` l'output non è sempre deterministico.
+- **Latenza del Riassunto:** nelle domande in cui scatta la compressione il riassuntore aggiunge una chiamata (6–30 s negli spike, con picchi fino a 68 s; nelle prove reali da 6,8 a 33,2 s), oltre a Router e Revisore. Se quella domanda fallisce, la chiamata si ripete alla domanda successiva.
+- **Prompt più lunghi:** con un riassunto presente i prompt di Router, agente e Revisore crescono.
+- **«Come mi chiamo?» dopo la compressione:** se il nome è rimasto solo nel riassunto, il Router classifica la domanda fuori ambito («richiesta informazione personale») e risponde con il rifiuto. Domande più ricche come «Ricordami come mi chiamo e qual è il mio obiettivo» passano e l'agente risponde dal riassunto. Tre formulazioni della sezione del riassunto non hanno cambiato il comportamento (vedi `prove_reali/PROVE.md`).
+- **«Ho salvato»:** richiamando informazioni dal riassunto l'agente può scrivere «Ho salvato le seguenti informazioni»: è impreciso, nulla viene salvato oltre la sessione.
 - **Motivo nei log:** è testo generato dal modello. Troncamento e istruzioni dello schema riducono il rischio che riporti parti della richiesta, ma non lo azzerano.
 - **Modello piccolo e sessioni lunghe:** con tutti gli 11 strumenti registrati, `google/gemma-4-e2b` a volte **non chiama lo strumento** e risponde a parole o dalla cronologia. In due sessioni di 22 domande è successo ogni volta sulle stesse 4 domande (catalogo, note, meteo), quindi in modo riproducibile; le stesse domande, in sessioni nuove, hanno scelto lo strumento giusto 12 volte su 12. Non è stato mai chiamato uno strumento sbagliato. Se la risposta sembra inventata o obsoleta (per esempio un elenco di note), riformula la domanda o riavvia l'agente. L'elenco delle note mostrato dal modello senza chiamata può non essere aggiornato. Vedi `prove_reali/PROVE.md`.
 - **Conferma di cancellazione:** una cancellazione non parte mai senza il tuo `s` nel terminale; se il modello non chiama `elimina_nota` non compare la domanda `[s/N]` e non viene cancellato nulla. Con input da pipe una domanda saltata disallinea le righe successive.

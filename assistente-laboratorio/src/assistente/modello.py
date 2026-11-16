@@ -5,6 +5,7 @@ from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 
 from assistente.config import Config
+from assistente.riassunto import MAX_TOKENS_RIASSUNTO
 from assistente.revisore import Valutazione
 from assistente.router import Classificazione
 
@@ -29,3 +30,15 @@ def crea_classificatore(config: Config):
 def crea_revisore(config: Config):
     """Revisore: client separato (nuova istanza) con le stesse impostazioni del Router, senza strumenti."""
     return crea_client_router(config).with_structured_output(Valutazione, method="json_schema", include_raw=True)
+
+
+def crea_riassuntore(config: Config) -> ChatOpenAI:
+    """Riassuntore (spec Step 3 §4.1): client separato, testo libero, senza strumenti né output strutturato."""
+    return ChatOpenAI(
+        base_url=config.base_url,
+        api_key="lm-studio",
+        model=config.modello,
+        temperature=0,
+        reasoning_effort="none",
+        max_tokens=MAX_TOKENS_RIASSUNTO,
+    )

@@ -4,6 +4,8 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.graph import END
 
 from assistente.grafo import costruisci_grafo, instrada
+from assistente.config import SOGLIA_RIASSUNTO_PREDEFINITA
+from finti import riassuntore_inerte
 from assistente.strumenti import STRUMENTI
 from finti import AMBITO_TEST, ModelloSimulato, approva_sempre, in_ambito
 
@@ -17,7 +19,7 @@ def richiesta(*chiamate):
 
 
 def esegui(modello, domanda="Che ora è?"):
-    grafo = costruisci_grafo(modello, STRUMENTI, classificatore=in_ambito(), ambito=AMBITO_TEST, revisore=approva_sempre(), max_revisioni=1)
+    grafo = costruisci_grafo(modello, STRUMENTI, classificatore=in_ambito(), ambito=AMBITO_TEST, revisore=approva_sempre(), max_revisioni=1, riassuntore=riassuntore_inerte(), soglia_riassunto=SOGLIA_RIASSUNTO_PREDEFINITA)
     return grafo.invoke({"messages": [HumanMessage(domanda)]})["messages"]
 
 

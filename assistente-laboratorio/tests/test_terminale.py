@@ -3,7 +3,9 @@ import openai
 from langchain_core.messages import AIMessage, HumanMessage
 
 from assistente.grafo import costruisci_grafo
-from assistente.terminale import esegui_chat, esegui_turno
+from assistente.config import SOGLIA_RIASSUNTO_PREDEFINITA
+from finti import riassuntore_inerte
+from assistente.terminale import esegui_chat, Sessione, esegui_turno
 from finti import AMBITO_TEST, ModelloSimulato, approva_sempre, in_ambito
 
 
@@ -33,7 +35,7 @@ class GrafoSpia:
 
 def grafo_con(*risposte):
     modello = ModelloSimulato([AIMessage(r) if isinstance(r, str) else r for r in risposte])
-    return costruisci_grafo(modello, classificatore=in_ambito(), ambito=AMBITO_TEST, revisore=approva_sempre(), max_revisioni=1), modello
+    return costruisci_grafo(modello, classificatore=in_ambito(), ambito=AMBITO_TEST, revisore=approva_sempre(), max_revisioni=1, riassuntore=riassuntore_inerte(), soglia_riassunto=SOGLIA_RIASSUNTO_PREDEFINITA), modello
 
 
 def test_esci_termina_la_chat():
@@ -100,9 +102,9 @@ def test_errore_del_server_ripristina_la_cronologia():
     grafo, _ = grafo_con(errore)
     precedente = [HumanMessage("Ciao"), AIMessage("Salve")]
 
-    cronologia, testo = esegui_turno(grafo, precedente, "Nuova domanda", 6, max_revisioni=1)
+    sessione, testo = esegui_turno(grafo, Sessione(tuple(precedente)), "Nuova domanda", 6, max_revisioni=1)
 
-    assert cronologia == precedente
+    assert sessione.messaggi == tuple(precedente)
     assert "/v1/models" in testo
 
 
