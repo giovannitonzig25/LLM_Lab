@@ -558,3 +558,36 @@ Turni completi da 33 a 250 s. In Docker: riassuntore 6,8 e 7,2 s, Router 26,5–
 - Fail-open del riassuntore (server non raggiungibile, output vuoto o troncato) e turno fallito dopo una compressione: coperti dai test simulati.
 - Prove 1–7 con la cornice B.1 rivista: non ripetute; la prova 8 copre ricordo del nome e due compressioni.
 - Prove con le note in Docker: escluse per scelta (archivio su volume persistente).
+
+## Ramo `feat/preferenze` — Step 4 Lezione 6: Resource MCP, preferenze dell'utente (2026-11-16)
+
+Prove reali con LM Studio (`google/gemma-4-e2b`) e Docker Desktop, **distinte dai test simulati** (`tests/test_preferenze.py`, `test_server_mcp.py`, `test_mcp_client.py`, `test_strumenti.py`, `test_grafo.py`, `test_terminale.py`). In locale le domande sono state passate da uno script nella scratchpad che avvia server MCP e servizio HTTP e pilota `python -m assistente.terminale` via stdin; gli esiti sono stati riletti dai log su stderr.
+
+- **Dati:** `NOTE_DB_PATH` e `PREFERENZE_PATH` puntavano a file temporanei nella scratchpad. Hash di `data/note.db` (`5fa44468…`) e di `.env` (`3ea91290…`) uguali prima e dopo; `.env` non è stato modificato.
+- **R2 senza riavviare il server:** il server MCP è stato avviato una volta con le preferenze di R1; il file è stato cambiato prima della sessione R2, e la stessa istanza del server ha servito R2, il confronto sugli stili, R3 e R4.
+
+| # | Atteso | Effettivo | Esito |
+|---|---|---|---|
+| R1 | `italiano`, `Europe/Rome`, `sintetico`: «Che ore sono?» senza chiedere il fuso; domanda in ambito in italiano e breve; lettura visibile nei log, separata dai tool | Log: `resource utente://preferenze letta da http://localhost:8001/mcp` e `preferenze della sessione: lingua=italiano (resource), fuso_orario=Europe/Rome (resource), stile=sintetico (resource)` **prima** di qualunque `strumento richiesto`; lato server `resource utente://preferenze letta da <file>`. `orologio` chiamato **senza argomenti** → «Sono le 19:48:40 del 16 novembre 2026 (Europe/Rome).»; «Converti 25 gradi Celsius in Fahrenheit.» → «25 gradi Celsius sono 77 gradi Fahrenheit.» | **riuscita** |
+| R2 | File cambiato in `inglese`, `America/New_York`, `dettagliato`; nuova sessione senza toccare codice né server | Riga `preferenze della sessione` con i tre valori `(resource)`. `orologio` **senza argomenti** → «The current time is 13:52:41 on November 16, 2026, in the America/New_York timezone (UTC-05:00).»; conversione → «25 degrees Celsius is equal to 77 degrees Fahrenheit.» Revisore coerente su entrambe le risposte in inglese | **riuscita** per fuso e lingua; stile non osservabile su una conversione (risposta di una frase) |
+| R2b | Confronto degli stili su una domanda che si presta a spiegazioni: «Che cos'è il fuso orario UTC?» (italiano, Europe/Rome) | `dettagliato`: definizione, elenco in 4 punti (che cos'è, funzione, relazione con l'ora locale, misurazione) e sintesi finale. `sintetico`: 2 frasi. Revisore coerente in entrambi i casi | **riuscita** |
+| R3 | `"stile": "dettagliatissimo"`: WARNING sul campo, gli altri due dal file | `WARNING … preferenza stile non valida (ammessi solo sintetico o dettagliato: 'dettagliatissimo'): uso sintetico`; `lingua=italiano (resource), fuso_orario=Europe/Rome (resource), stile=sintetico (predefinito)` | osservazione: come previsto |
+| R4 | File mancante: WARNING con la causa, tre predefiniti, conversazione con gli strumenti MCP | `WARNING … preferenze non disponibili (lettura di utente://preferenze impossibile su http://localhost:8001/mcp: <file>: No such file or directory): uso i valori predefiniti`; tre `(predefinito)`. «Salva una nota: comprare il latte» → `aggiungi_nota` via MCP, «Nota salvata.» Nel log del server compare anche il traceback di FastMCP con `ResourceError` | **riuscita** |
+| R5 | Server MCP spento: due avvisi distinti, conversazione con strumenti locali e HTTP | Con il file che chiedeva New York: `WARNING assistente.strumenti: discovery MCP fallita, avvio ridotto …` e `WARNING assistente.preferenze: preferenze non disponibili (… Client failed to connect …)`, più l'avviso su stderr del terminale. «Che ore sono?» → `orologio` senza argomenti, Europe/Rome (predefinito) | **riuscita** |
+| R6 | Docker: file creato con i comandi del README, `docker compose build`, sessione; poi modifica sull'host e nuova sessione senza build | `New-Item … data` + `Copy-Item preferenze.example.json data\preferenze.json`, `docker compose build`, `docker compose run --rm -T assistente`: lettura da `http://server-mcp:8001/mcp`, server `resource … letta da /preferenze/preferenze.json`, «Sono le 20:19:22 (Europe/Rome).» Poi `Set-Content -Encoding utf8` (scrive il **BOM**) con inglese/New York/dettagliato, `server-mcp` lasciato acceso, nuova `docker compose run --rm -T assistente` → «The current time is 14:20:30 on November 16, 2026, in the America/New_York timezone.» | **riuscita** (anche con BOM) |
+
+Dopo R6: `docker compose down` (senza `-v`), `data/preferenze.json` riportato al contenuto dell'esempio.
+
+### Comportamenti inattesi (registrati, non nascosti)
+
+- **Router, anomalia già nota:** nella sessione R2b con stile `dettagliato` il Router ha impiegato **1004,9 s** e si è chiuso con `LengthFinishReasonError` (fail-open: la domanda è arrivata all'agente, che ha risposto correttamente). È l'anomalia osservata negli step precedenti, con migliaia di token di ragionamento nonostante `reasoning_effort="none"`. Il Router non cambia in questo Step e il suo prompt non contiene le preferenze; la stessa domanda con `sintetico` è stata classificata in 34,1 s.
+- **Traceback nel log del server:** con il file mancante FastMCP registra il traceback di `ResourceError`, anche se il messaggio che arriva al client è pulito. Documentato nel README (Diagnosi).
+
+### Latenze (sessioni locali)
+
+Router 28,2–51,8 s (escluso il caso anomalo), Revisore 5,9–13,5 s; sessioni da 2 domande circa 220 s. In Docker: sessione da 1 domanda 66–67 s. La lettura della resource all'avvio non ha latenza percepibile (avvio di R3 e R4 senza domande: 6–9 s complessivi, incluso l'avvio dei servizi).
+
+### Non verificati dal vivo
+
+- Server che accetta la connessione ma non risponde: coperto dal test con `porta_muta()`.
+- JSON non valido o non oggetto, chiavi sconosciute, `lingua` non valida: coperti dai test simulati.
