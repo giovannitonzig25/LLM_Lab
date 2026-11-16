@@ -624,3 +624,26 @@ Router 42,5–79,8 s, Revisore 7,9–71,8 s, Riassunto (compressione) 16,0 s. Se
 - R7 in Docker (Compose non è cambiato; i prompt viaggiano sullo stesso server MCP).
 - Server che accetta la connessione ma non risponde: coperto dal test con `porta_muta()`.
 - Messaggio non testuale, ruoli non riconosciuti, apostrofi e barre rovesciate nei valori: coperti dai test simulati.
+
+## Ramo `feat/agente-http` — Step 6 Lezione 6: l'agente come servizio HTTP (2026-11-17)
+
+Controllo funzionale essenziale con LM Studio (`google/gemma-4-e2b`), una volta per evidenza, distinto dai test simulati (`tests/test_servizio_agente.py`, `test_terminale.py`). Server MCP, servizio HTTP e agente avviati in locale come processi separati con le variabili di `.env`; chiamate con `Invoke-RestMethod`.
+
+- **Dati:** server MCP sul `data/note.db` reale; per la prova di cancellazione è stata aggiunta la nota 2 («nota di prova Step 6»), poi cancellata dalla prova stessa.
+
+| # | Atteso | Effettivo | Esito |
+|---|---|---|---|
+| H1 | `GET /stato` con tutto attivo: 200; `/docs` consultabile | `{"agente":"ok","mcp":"ok","modello":"ok"}`; `/docs` 200 | **riuscita** |
+| H2 | `POST /chat` «Che ore sono a Tokyo?»: risposta, `strumenti_usati`, traccia nel log | Risposta «Attualmente sono le 08:33:02 del 17 novembre 2026 a Tokyo.», `strumenti_usati=[{"nome":"orologio","argomenti":{"timezone":"Asia/Tokyo"}}]`, cronologia di 4 messaggi. Log: `router … → agente`, `strumento richiesto: nome=orologio …`, `strumento eseguito: … (Asia/Tokyo, UTC+09:00)`, `revisore: coerente=true`, `turno: esito=risposta strumenti=['orologio'] … durata=107.6s` | **riuscita** |
+| H3 | Server MCP spento: codice e messaggio comprensibili | `/stato` → 503 `{"agente":"ok","mcp":"non raggiungibile: discovery impossibile su http://localhost:8001/mcp: …","modello":"ok"}`; `/prompts` → 503 `{"errore":"discovery dei prompt impossibile su …"}` | **riuscita** |
+| H4 | Modello non raggiungibile (secondo agente sulla porta 8003 con `LM_STUDIO_BASE_URL=http://localhost:1/v1`) | `POST /chat` → 503 `{"errore":"Non riesco a ottenere una risposta dal server del modello (Connection error.). Controlla che LM Studio sia attivo …"}` | **riuscita** |
+| H5 | CLI come client: «Elimina la nota con id 2», conferma `s` | La CLI chiede `Confermi: elimina_nota {'id': 2}? [s/N]`, ripete il turno con la conferma, stampa «Nota 2 eliminata.»; nota assente nel database. Log: primo turno `conferme_richieste=['elimina_nota']`, secondo `conferma dell'utente: strumento=elimina_nota esito=sì` e `turno: esito=risposta strumenti=['elimina_nota'] conferme_richieste=[]` | **riuscita** |
+
+### Comportamenti inattesi (registrati, non nascosti)
+
+- **Primo giro della cancellazione lungo (192 s):** il Revisore ha respinto la risposta «non confermata» e ha chiesto una correzione prima che la CLI potesse chiedere la conferma; il secondo giro, confermato, ha richiesto 96 s. In tutto circa 5 minuti per una cancellazione.
+
+### Non verificati dal vivo
+
+- Docker Compose (nuovo servizio `agente` con healthcheck e CLI con `AGENTE_URL=http://agente:8002`): solo `docker compose config` valido, nessun avvio.
+- Prompt MCP dalla CLI attraverso l'API: coperti dai test con il server MCP reale (`test_main_prompt_spiega_dal_server_reale`).

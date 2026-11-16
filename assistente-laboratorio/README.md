@@ -1,6 +1,6 @@
 # Assistente del laboratorio
 
-Applicazione da terminale in Python con un grafo LangGraph esplicito. Specifica e piano: `docs/superpowers/`.
+Agente in Python con un grafo LangGraph esplicito, esposto come servizio HTTP (FastAPI) e usato da una CLI da terminale che ne è client. Specifica e piano: `docs/superpowers/`.
 
 ## Ambiente (PowerShell, da `assistente-laboratorio/`)
 
@@ -47,19 +47,40 @@ Lo script elenca gli identificativi restituiti da `GET /v1/models` ed esce con e
 | `SERVIZI_TIMEOUT` | secondi massimi per ogni richiesta al servizio (> 0), predefinito 10 |
 | `SERVIZI_DOCKER_URL` | solo Compose: indirizzo del servizio visto dal container, predefinito `http://servizi-http:8000` |
 
+Lato servizio dell'agente (`python -m assistente.servizio_agente`): `AGENTE_HOST` (predefinito `127.0.0.1`), `AGENTE_PORT` (predefinito `8002`); tutte le variabili della tabella sopra si leggono qui. Lato CLI (`python -m assistente.terminale`): solo `AGENTE_URL` (predefinito `http://localhost:8002`).
+
 Lato servizio HTTP (`python -m assistente.servizi_http`): `SERVIZI_HOST` (predefinito `127.0.0.1`), `SERVIZI_PORT` (predefinito `8000`).
 
 Lato server MCP (`python -m assistente.server_mcp`): `NOTE_DB_PATH` (file SQLite, predefinito `data/note.db`), `PREFERENZE_PATH` (file delle preferenze, predefinito `data/preferenze.json` nella cartella del progetto, vedi «Preferenze dell'utente»), `MCP_HOST` (predefinito `127.0.0.1`), `MCP_PORT` (predefinito `8001`).
 
 ## Avvio
 
-Dopo aver caricato le variabili nella stessa finestra di PowerShell:
+Servono quattro finestre di PowerShell, tutte da `assistente-laboratorio/` con `$env:PYTHONPATH = "src"`: server MCP (porta 8001) e servizio HTTP (porta 8000), descritti sotto, poi l'agente e la CLI. Nella finestra dell'agente carica prima le variabili di `.env`:
 
 ```powershell
-$env:PYTHONPATH = "src"; .\.venv\Scripts\python.exe -m assistente.terminale
+$env:PYTHONPATH = "src"; .\.venv\Scripts\python.exe -m assistente.servizio_agente   # agente, porta 8002
+$env:PYTHONPATH = "src"; .\.venv\Scripts\python.exe -m assistente.terminale         # CLI, in un'altra finestra
 ```
 
-Uscita: `esci`, Ctrl+C o Ctrl+D.
+Uscita dalla CLI: `esci`, Ctrl+C o Ctrl+D. Se l'agente non è attivo la CLI stampa `Agente non raggiungibile su http://localhost:8002…` ed esce con codice 1; se l'agente è attivo ma MCP o il modello non sono raggiungibili, stampa un avviso e prosegue.
+
+### API dell'agente
+
+L'agente è senza stato: a ogni chiamata riceve la cronologia (messaggi LangChain serializzati con `messages_to_dict`) e il riassunto, e li restituisce aggiornati. La documentazione OpenAPI è su `http://localhost:8002/docs`.
+
+| Endpoint | Uso |
+|---|---|
+| `POST /chat` | `{messaggio \| messaggi, cronologia, riassunto, conferme}` → `{risposta, cronologia, riassunto, strumenti_usati, conferme_richieste}` |
+| `GET /stato` | `{agente, mcp, modello}`: 200 se tutto è raggiungibile, altrimenti 503 col motivo |
+| `GET /prompts`, `POST /prompts/{nome}` | prompt MCP (usati dai comandi `/prompts` e `/prompt`); 503 se MCP è spento |
+
+```powershell
+$r = Invoke-RestMethod -Method Post -Uri http://localhost:8002/chat -ContentType "application/json; charset=utf-8" -Body ([Text.Encoding]::UTF8.GetBytes('{"messaggio": "Che ore sono a Tokyo?"}'))
+$r.risposta; $r.strumenti_usati
+Invoke-RestMethod http://localhost:8002/stato
+```
+
+Errori: 503 se LM Studio non è raggiungibile (`{"errore": "Non riesco a ottenere una risposta dal server del modello…"}`), 502 per altri errori del modello, 422 per una richiesta malformata (anche `messaggio` e `messaggi` insieme). Il limite di passaggi e gli strumenti in errore rispondono 200, come nella CLI. Nel log dell'agente ogni turno chiude con `turno: esito=… strumenti=[…] durata=…`, preceduto dalle righe `strumento richiesto` / `strumento eseguito`.
 
 ### Server MCP delle note (uso locale)
 
@@ -73,7 +94,7 @@ Le note stanno in `data/note.db` (cartella ignorata da Git). All'avvio l'agente 
 
 **Avvio ridotto.** Se il server MCP non risponde, l'agente parte lo stesso con i soli strumenti locali (`orologio`) e scrive su stderr «Server MCP non raggiungibile su …». La discovery non viene ripetuta nei turni successivi: riavvia l'agente quando il server è attivo. Con `MCP_ATTESA_AVVIO` maggiore di 0 l'agente riprova ogni secondo, ma solo all'avvio.
 
-**Eliminazione delle note.** `elimina_nota` è dichiarato dal server con l'annotazione MCP `destructiveHint`. Prima di chiamarlo, l'agente chiede nel terminale `Confermi: elimina_nota {'id': 3}? [s/N]`: solo `s`, `si` o `sì` fanno partire la cancellazione; qualsiasi altra risposta, Ctrl+D o l'assenza della domanda la impediscono, qualunque cosa il modello scriva negli argomenti. **Limite:** la protezione riguarda l'uso tramite questo agente. Il server da solo non verifica nulla, quindi un altro client MCP collegato alla porta 8001 può cancellare le note senza conferma.
+**Eliminazione delle note.** `elimina_nota` è dichiarato dal server con l'annotazione MCP `destructiveHint`. L'agente lo esegue solo se la richiesta HTTP contiene in `conferme` lo stesso strumento con gli stessi argomenti; altrimenti non lo esegue e lo restituisce in `conferme_richieste`. La CLI chiede allora `Confermi: elimina_nota {'id': 3}? [s/N]` e, se confermi, ripete lo stesso turno con la conferma: solo `s`, `si` o `sì` fanno partire la cancellazione; qualsiasi altra risposta, Ctrl+D o l'assenza della domanda la impediscono, qualunque cosa il modello scriva negli argomenti. **Limite:** la protezione riguarda l'uso tramite questo agente. Il server da solo non verifica nulla, quindi un altro client MCP collegato alla porta 8001 può cancellare le note senza conferma.
 
 ### Servizio HTTP di date e scadenze (uso locale)
 
@@ -182,7 +203,7 @@ docker compose build
 docker compose run --rm assistente
 ```
 
-Compose avvia tre servizi con la stessa immagine: `server-mcp` (porta pubblicata solo su `127.0.0.1:8001`, note nel volume `dati-note`), `servizi-http` (solo su `127.0.0.1:8000`; il controllo di salute fa una richiesta HTTP reale a `/salute`) e `assistente`. `docker compose run --rm assistente` avvia anche il server, se non è già attivo. Lo stato del server si vede con `docker compose ps`: il controllo di salute fa una vera discovery MCP (`python -m assistente.verifica_mcp`), non solo una connessione alla porta.
+Compose avvia quattro servizi con la stessa immagine: `agente` (servizio HTTP dell'agente, solo su `127.0.0.1:8002`, con le variabili di `.env`), `server-mcp` (porta pubblicata solo su `127.0.0.1:8001`, note nel volume `dati-note`), `servizi-http` (solo su `127.0.0.1:8000`; il controllo di salute fa una richiesta HTTP reale a `/salute`) e `assistente` (la CLI, con `AGENTE_URL=http://agente:8002`). `docker compose run --rm assistente` avvia anche agente e server, se non sono già attivi. Lo stato del server si vede con `docker compose ps`: il controllo di salute fa una vera discovery MCP (`python -m assistente.verifica_mcp`), non solo una connessione alla porta.
 
 ```powershell
 docker compose up -d server-mcp                  # avvia solo il server (stato healthy dopo pochi secondi)
@@ -199,10 +220,11 @@ Anche `servizi-http` è una dipendenza con `condition: service_started`: se è f
 **Avvio ridotto in Docker.** L'agente dipende da `server-mcp` con `condition: service_started`, non da `service_healthy`: se il server è fermo, in crash o non sano, l'agente parte comunque con il solo `orologio` e l'avviso. Se invece il server **non riesce nemmeno a partire** (per esempio la porta 8001 dell'host è occupata), `docker compose run --rm assistente` fallisce perché Compose non avvia la dipendenza («ports are not available»). In quel caso usa:
 
 ```powershell
+docker compose up -d --no-deps agente
 docker compose run --rm --no-deps assistente
 ```
 
-che non avvia il server e dà l'avvio ridotto.
+che avviano l'agente senza il server (avvio ridotto) e poi la CLI. La CLI dipende da `agente` con `condition: service_healthy`: parte quando l'agente risponde, dopo l'eventuale attesa di `MCP_ATTESA_AVVIO`. I log dell'agente (con la traccia degli strumenti) si leggono con `docker compose logs agente`.
 
 Per controllare dal container che l'host sia raggiungibile e il modello presente:
 
@@ -370,7 +392,9 @@ Quando il limite è raggiunto il turno viene scartato: la cronologia torna a com
 ## Struttura
 
 ```
-src/assistente/   config, modello (LM Studio), grafo (LangGraph), terminale
+src/assistente/   config, modello (LM Studio), grafo (LangGraph)
+                  agente (turno e costruzione del grafo), servizio_agente/ (API FastAPI dell'agente)
+                  terminale (CLI client dell'API)
                   comandi (comandi /prompts e /prompt: scomposizione, controllo, conversione)
                   riassunto (Riassunto della cronologia: turni, trascrizione, prompt, nodo)
                   router (Router di ambito: contesto, prompt, rifiuto)
@@ -431,5 +455,6 @@ docs/superpowers/ specifica e piano
 - **Prompt rifiutato dal Router:** il testo compilato è fuori da `AMBITO_AGENTE`; controlla l'ambito nel tuo `.env`. Se un valore non ammesso dal server dà «Prompt non eseguito», nei log del server compare anche il traceback di FastMCP: è atteso.
 - **Preferenze ignorate:** cerca nei log dell'agente la riga `preferenze della sessione`: `(predefinito)` indica il campo non letto, e il `WARNING` precedente dice perché. Se il file manca, nei log del server compare anche il traceback di FastMCP con `ResourceError`: è atteso.
 - **Variabile mancante:** il programma lo dice e termina con codice 1.
-- **«Non riesco a ottenere una risposta dal server»:** LM Studio è spento o `LM_STUDIO_BASE_URL` è sbagliato. La chat resta aperta: riavviato il server, si può riprovare.
+- **«Non riesco a ottenere una risposta dal server»:** LM Studio è spento o `LM_STUDIO_BASE_URL` è sbagliato (l'API risponde 503). La chat resta aperta: riavviato il server, si può riprovare.
+- **Agente:** `Invoke-RestMethod http://localhost:8002/stato` (in PowerShell 5.1 un 503 diventa un'eccezione: il corpo con il motivo è nel messaggio) dice quale componente non è raggiungibile.
 - **Identificativo del modello:** LM Studio con un solo modello caricato ha risposto anche a un identificativo inesistente, quindi un errore di battitura può non dare errori. Verifica sempre con `prove_reali\verifica_modelli.py`.
