@@ -516,26 +516,45 @@ Le sessioni sono sette: 1 e 5 in tabella; nella sezione «Prove mirate» le due 
 - Correzione dopo una risposta davvero parziale (vedi sopra).
 - Duplicazione di una nota durante una correzione: non osservata, perché nessuna correzione ha coinvolto `aggiungi_nota`.
 
-## Ramo `feat/riassunto` — Step 3 Lezione 6: Riassunto della cronologia
+## Ramo `feat/riassunto` — Step 3 Lezione 6: Riassunto della cronologia (2026-11-15/16)
 
-Prove reali con LM Studio (`google/gemma-4-e2b`) e Docker Desktop, **distinte dai test simulati** di `tests/test_riassunto.py`, con `SOGLIA_RIASSUNTO=6`. Conversazioni nuove e in ambito. Per ogni prova si registrano: domanda o sequenza, log «prima → dopo» di `assistente.riassunto`, esito di Router, agente e Revisore, latenze, token del server quando disponibili (solo diagnostica). In locale il server MCP usa un archivio SQLite temporaneo (`NOTE_DB_PATH`); hash di `data/note.db` prima e dopo.
+Prove reali con LM Studio (`google/gemma-4-e2b`, contesto 8192 token) e Docker Desktop, **distinte dai test simulati** di `tests/test_riassunto.py`, con `SOGLIA_RIASSUNTO=6`. Le domande sono state passate da uno script nella scratchpad che pilota `python -m assistente.terminale` (una riga a ogni «Tu: », «n» a «[s/N]: »); gli esiti sono stati riletti dai log su stderr. Durata del turno misurata dallo script; durate di Router, riassuntore e Revisore dal campo `durata=` dei log.
 
-Esiti da compilare con il Task 9 del piano: nessun esito è ancora registrato.
+- **Dati:** in locale il server MCP usava un archivio SQLite temporaneo (`NOTE_DB_PATH` nella scratchpad, con 25 note precaricate per la prova 6); hash SHA-256 di `data/note.db` uguale prima e dopo tutte le prove (`5fa44468…`). `.env` salvato prima della prova Docker e ripristinato dopo: hash identico, nessuna riga `SOGLIA_RIASSUNTO`.
+- **Esecuzione:** 4 sessioni locali una dopo l'altra (nessuna contesa fra sessioni); nei primi turni della sessione 1 girava in parallelo una `docker compose build`, quindi quei tempi vanno letti con cautela.
+- **Prompt:** le prove 1–7 sono state eseguite con le cornici del 2026-11-15; dopo il fallimento delle prove 1 e 5 la cornice dell'agente (B.1) è stata rivista (spike in specifica §13.4) e la prova 8 è stata eseguita con la cornice rivista. Le prove 1–7 non sono state ripetute (regola di sviluppo pragmatico dell'utente): la prova 8 ne copre la parte principale.
 
-### 1. Nome al primo turno, usato dopo la compressione
+| # | Atteso | Effettivo | Esito |
+|---|---|---|---|
+| 1 | Nome dato al turno 1, «Come mi chiamo?» dopo la compressione → risposta corretta | Compressione `messaggi 11 → 9` (6,8–7,7 s), poi Router `fuori_ambito` («richiesta informazione personale»): rifiuto fisso, agente non eseguito | **fallita** (Router) |
+| 2 | Sotto la soglia nessuna chiamata al riassuntore | Log «soglia non superata (messaggi=1, 3, 5)» e, oltre la soglia senza turni da togliere, «nessun turno eliminabile (messaggi=7, turni completi=2)»: nessuna chiamata | **riuscita** |
+| 3 | Informazione presente solo nel riassunto usata in una continuazione | «E se fossimo 10 persone…?» → Router `conversazione`, `calcola("400 / 10")`, Revisore coerente. Ma «400» era anche nel turno 2 conservato («Quanto fa 400 diviso 8?»): la memoria riassunta non è isolata | **verifica incompleta** (isolata poi nello spike, scenario C1: 3/3) |
+| 4 | Valore cambiato di recente prevale sul riassunto in Router, agente e Revisore | Router `conversazione`; agente `calcola("500 / 10")` = 50 (valore recente); **Revisore `coerente=false` sulla risposta corretta**, correzione, poi approvata | **parziale** (Revisore) |
+| 5 | Informazione del turno 1 sopravvive a due compressioni | Tre compressioni (`11 → 9`, `11 → 7`, `11 → 7`), poi «Ricordami come mi chiamo e qual è il mio obiettivo» rifiutata dal Router | **fallita** (Router), poi **riuscita** in Docker con la B.1 rivista (prova 8) |
+| 6 | Osservazione: elemento di un `elenca_note` lungo dopo la compressione | La nota 6 («certificato medico») era oltre i 1000 caratteri del risultato troncato. L'agente ha risposto correttamente **senza richiamare lo strumento**: la nota compariva nella sua risposta testuale del turno 1, trascritta per intero. Non è una garanzia: con una risposta riassuntiva il dato sarebbe perso | osservazione (corretta, ma non per il motivo giusto) |
+| 7 | Osservazione: risultato storico legato a una decisione superata | Scadenza 18 → 22 dicembre; alla domanda finale l'agente usa il 22 e ricalcola con `giorni_lavorativi` (15), senza riusare il vecchio 13 | osservazione: non confuso |
+| 8 | Docker, sessione oltre la soglia senza strumenti delle note | `docker compose run --rm -T assistente` con `SOGLIA_RIASSUNTO=6` da `.env`: nome e obiettivo al turno 1, calcolo, conversione, giorni lavorativi; compressioni `11 → 9` e `15 → 11`; «Ricordami come mi chiamo e qual è il mio obiettivo» → «Il tuo nome è Marta e il tuo obiettivo è preparare il piano di studio per il corso di Python», Revisore coerente | **riuscita** |
 
-### 2. Sotto la soglia nessuna chiamata al riassuntore
+### Comportamenti inattesi (registrati, non nascosti)
 
-### 3. Continuazione riferita a un'informazione presente solo nel riassunto
+- **Router, falsi rifiuti senza riassunto:** «Sto organizzando una cena aziendale per 8 persone con un budget di 400 euro» e «Quanto fa 400 diviso 8?» classificate `fuori_ambito` (sessione 2, turni 1–2, prima di qualsiasi riassunto): limite del Router dello Step 1.
+- **Router e «Come mi chiamo?»:** con il nome solo nel riassunto `fuori_ambito` in tutte le esecuzioni (prove 1 e 5, spike V0–V3 §13.4); con il nome nei turni recenti `conversazione` 3/3. Tre formulazioni della cornice B.2 non lo cambiano: limite documentato.
+- **Revisore:** respinge risposte corrette (prova 4; 13 giorni lavorativi respinti due volte fino al limite, sessione 4; in Docker respinge «10 giorni lavorativi» perché «non è possibile determinare le festività» e approva una correzione **senza il numero**). Agente: in sessione 4 calcola 15/4 invece di 15×4, e il Revisore approva dopo la correzione. Limiti dello Step 2, non introdotti dal riassunto.
+- **Router, ciclo di ragionamento:** in una variante di cornice scartata (spike V1) il Router ha generato 7676 token di ragionamento con `reasoning_effort="none"` fino a esaurire il contesto (12–16 min, poi fail-open). Con le cornici adottate non si è ripetuto (nessun timeout a 120 s).
+- **Docker:** il primo `docker compose build` è fallito per un errore della cache di Docker («parent snapshot … does not exist»); `docker compose run` ha ricostruito le immagini e l'immagine usata conteneva la cornice rivista (verificato importando `assistente.riassunto` nel container).
 
-### 4. Contraddizione: valore cambiato in un turno recente
+### Latenze (sessioni locali)
 
-### 5. Due compressioni successive
+| Componente | Chiamate | Minimo | Mediana | Massimo |
+|---|---|---|---|---|
+| Router | 22 | 27,2 s | 36,3 s | 58,8 s |
+| Riassuntore (compressioni) | 10 | 7,7 s | 9,7 s | 33,2 s |
+| Revisore | 21 | 6,1 s | 9,7 s | 50,8 s |
 
-### 6. Elenco lungo di note (osservazione)
-
-### 7. Risultato storico legato a una decisione superata (osservazione)
-
-### 8. Docker Compose, senza strumenti delle note
+Turni completi da 33 a 250 s. In Docker: riassuntore 6,8 e 7,2 s, Router 26,5–43,2 s, Revisore 6,4–48,9 s. Token del server non registrati nei log del programma.
 
 ### Non verificati dal vivo
+
+- Fail-open del riassuntore (server non raggiungibile, output vuoto o troncato) e turno fallito dopo una compressione: coperti dai test simulati.
+- Prove 1–7 con la cornice B.1 rivista: non ripetute; la prova 8 copre ricordo del nome e due compressioni.
+- Prove con le note in Docker: escluse per scelta (archivio su volume persistente).
