@@ -3,6 +3,7 @@ from pathlib import Path
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
+import assistente.preferenze as modulo_preferenze
 import assistente.riassunto as modulo_riassunto
 from assistente.revisore import crea_osservazione
 import assistente.router as modulo_router
@@ -1016,15 +1017,17 @@ def test_sezione_prima_dei_turni_precedenti(indice):
         assert prompt.index(RIASSUNTO_GRAFFE) < prompt.index(intestazione) < prompt.index("DOMANDA ATTUALE:")
 
 
-def test_agente_senza_riassunto_nessun_system_message():
+def test_agente_senza_riassunto_riceve_solo_le_preferenze():
     grafo, modello, _ = grafo_con_riassunto(riassuntore_inerte(), soglia=20)
     messaggi = senza_id(2)
 
     grafo.invoke({"messages": messaggi, "riassunto": ""})
 
+    # Step 4 (spec §10.1): senza riassunto l'agente riceve solo il SystemMessage delle preferenze.
     [richiesta] = modello.chiamate
-    assert not any(isinstance(m, SystemMessage) for m in richiesta)
-    assert [(type(m), m.content) for m in richiesta] == [(type(m), m.content) for m in contesto_agente(messaggi, 4)]
+    assert [m for m in richiesta if isinstance(m, SystemMessage)] == [richiesta[0]]
+    assert richiesta[0].content == modulo_preferenze.testo_prompt(modulo_preferenze.PREFERENZE_PREDEFINITE)
+    assert [(type(m), m.content) for m in richiesta[1:]] == [(type(m), m.content) for m in contesto_agente(messaggi, 4)]
 
 
 def test_agente_con_riassunto_riceve_la_cornice():
@@ -1035,7 +1038,8 @@ def test_agente_con_riassunto_riceve_la_cornice():
 
     [richiesta] = modello.chiamate
     assert isinstance(richiesta[0], SystemMessage)
-    assert richiesta[0].content == blocco_testo("### B.1").replace("{riassunto}", RIASSUNTO_GRAFFE)
+    # Step 4 (spec §10.1): preferenze, riga vuota, poi la cornice B.1 invariata.
+    assert richiesta[0].content == modulo_preferenze.testo_prompt(modulo_preferenze.PREFERENZE_PREDEFINITE) + "\n\n" + blocco_testo("### B.1").replace("{riassunto}", RIASSUNTO_GRAFFE)
     assert [m.content for m in richiesta[1:]] == [m.content for m in messaggi]
     assert not any(isinstance(m, SystemMessage) for m in esito["messages"])
 
@@ -1067,4 +1071,6 @@ def test_riassunto_nuovo_ai_tre_componenti_nello_stesso_turno():
     sezione = modulo_router.sezione_riassunto("RIASSUNTO-NUOVO {x}")
     assert sezione in classificatore.chiamate[0][0].content
     assert sezione in revisore.chiamate[0][0].content
-    assert modello.chiamate[0][0].content == modulo_riassunto.CORNICE_AGENTE.format(riassunto="RIASSUNTO-NUOVO {x}")
+    assert modello.chiamate[0][0].content == (
+        modulo_preferenze.testo_prompt(modulo_preferenze.PREFERENZE_PREDEFINITE) + "\n\n" + modulo_riassunto.CORNICE_AGENTE.format(riassunto="RIASSUNTO-NUOVO {x}")
+    )

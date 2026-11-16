@@ -84,7 +84,9 @@ def test_la_seconda_domanda_vede_la_prima():
 
     esegui(grafo, ["Mi chiamo Marco", "Come mi chiamo?", "esci"])
 
-    seconda = modello.chiamate[1]
+    # Step 4 (spec §10.1): in testa c'è sempre il SystemMessage delle preferenze; la cronologia segue.
+    sistema, *seconda = modello.chiamate[1]
+    assert type(sistema).__name__ == "SystemMessage"
     assert [type(m) for m in seconda] == [HumanMessage, AIMessage, HumanMessage]
     assert [m.content for m in seconda] == ["Mi chiamo Marco", "Piacere, Marco", "Come mi chiamo?"]
 
@@ -95,7 +97,9 @@ def test_cronologia_non_persiste_tra_sessioni():
     esegui(grafo, ["Prima sessione", "esci"])
     esegui(grafo, ["Seconda sessione", "esci"])
 
-    assert [m.content for m in modello.chiamate[1]] == ["Seconda sessione"]
+    # Step 4 (spec §10.1): in testa c'è sempre il SystemMessage delle preferenze; la cronologia segue.
+    assert type(modello.chiamate[1][0]).__name__ == "SystemMessage"
+    assert [m.content for m in modello.chiamate[1][1:]] == ["Seconda sessione"]
 
 
 def test_errore_del_server_ripristina_la_cronologia():
@@ -283,10 +287,11 @@ def test_main_bind_tools_senza_resource(monkeypatch, tmp_path):
     file_preferenze = tmp_path / "preferenze.json"
     file_preferenze.write_text('{"lingua": "inglese", "fuso_orario": "America/New_York", "stile": "dettagliato"}', encoding="utf-8")
     registrati = []
+    modello = ModelloSimulato([AIMessage("Ciao!")])
 
     def crea_modello_finto(config, strumenti):
         registrati.extend(strumenti)
-        return ModelloSimulato([AIMessage("Ciao!")])
+        return modello
 
     with avvia_server_mcp(crea_server(ArchivioNote(str(tmp_path / "note.db")), percorso_preferenze=file_preferenze)) as url:
         monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
@@ -308,3 +313,5 @@ def test_main_bind_tools_senza_resource(monkeypatch, tmp_path):
     ]
     assert not any("utente://" in s.description or "preferenze" in s.name for s in registrati)
     assert "America/New_York" in registrati[0].invoke({})
+    # Le stesse preferenze arrivano in cima al prompt di sistema dell'agente (T5).
+    assert "Rispondi sempre in inglese." in modello.chiamate[0][0].content

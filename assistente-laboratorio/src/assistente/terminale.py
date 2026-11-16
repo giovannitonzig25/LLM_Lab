@@ -121,7 +121,7 @@ def main() -> int:
     grafo = costruisci_grafo(
         crea_modello(config, strumenti), strumenti, classificatore=crea_classificatore(config), ambito=config.ambito,
         revisore=crea_revisore(config), max_revisioni=config.max_revisioni,
-        riassuntore=crea_riassuntore(config), soglia_riassunto=config.soglia_riassunto,
+        riassuntore=crea_riassuntore(config), soglia_riassunto=config.soglia_riassunto, preferenze=preferenze,
     )
     # Lo stesso valore va al grafo (Revisore) e al turno (recursion_limit): spec §17.
     esegui_chat(grafo, config.max_passaggi, lambda: input("Tu: "), print, max_revisioni=config.max_revisioni)
