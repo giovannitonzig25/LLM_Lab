@@ -170,3 +170,20 @@ def test_valori_predefiniti_e_limite():
 
 def test_fuso_predefinito_dell_orologio_viene_dalle_preferenze():
     assert strumenti.FUSO_PREDEFINITO == PREFERENZE_PREDEFINITE.fuso_orario == "Europe/Rome"
+
+
+# --- Fix della review finale ---
+def test_json_annidato_profondo_usa_i_predefiniti(caplog):
+    """Spec §7.4: nessuna eccezione verso l'avvio, nemmeno con un JSON patologico (RecursionError)."""
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        risultato = interpreta_preferenze("[" * 100_000 + "]" * 100_000)
+
+    assert risultato == PREFERENZE_PREDEFINITE
+    assert avvisi(caplog)
+
+
+@pytest.mark.parametrize("separatore", ["\u2028", "\u2029"])
+def test_lingua_con_separatore_di_riga_unicode_rifiutata(separatore, caplog):
+    """Spec §7.2: `lingua` su una riga; U+2028/U+2029 sono a capo per `splitlines` ma non categoria C."""
+    assert interpreta({**VALIDE, "lingua": f"ita{separatore}liano"}, caplog).lingua == "italiano"
+    assert any("lingua" in a for a in avvisi(caplog))

@@ -62,7 +62,8 @@ def _lingua(valore: Any) -> tuple[str | None, str]:
         return None, "vuota"
     if len(pulito) > MAX_LINGUA:
         return None, f"più di {MAX_LINGUA} caratteri"
-    if any(unicodedata.category(c).startswith("C") for c in pulito):
+    # Categoria C (controllo, compreso l'a capo) più Zl/Zp: U+2028 e U+2029 sono a capo per `splitlines`.
+    if any(unicodedata.category(c).startswith("C") or unicodedata.category(c) in ("Zl", "Zp") for c in pulito):
         return None, "contiene a capo o caratteri di controllo"
     return pulito, ""
 
@@ -104,8 +105,8 @@ def interpreta_preferenze(testo: str) -> Preferenze:
     """Testo della resource → preferenze, campo per campo (spec §7.2-7.3). Non solleva eccezioni."""
     try:
         dati = json.loads(testo)
-    except (json.JSONDecodeError, TypeError) as errore:
-        return _tutte_predefinite(f"testo non JSON: {errore}")
+    except (ValueError, TypeError, RecursionError) as errore:  # RecursionError: JSON annidato troppo in profondità
+        return _tutte_predefinite(f"testo non JSON: {type(errore).__name__}: {str(errore)[:80]}")
     if not isinstance(dati, dict):
         return _tutte_predefinite(f"il JSON non è un oggetto ma {type(dati).__name__}")
     sconosciute = sorted(str(chiave) for chiave in dati if chiave not in VALIDATORI)
