@@ -421,3 +421,59 @@ def test_errore_del_meteo_attraverso_il_ponte(tmp_path):
         risultato = meteo.invoke({"citta": "Atlantide"})
 
     assert risultato.startswith("Errore:") and "non trovata" in risultato
+
+
+# --- Step 4: lettura della resource utente://preferenze ---
+from assistente.mcp_client import leggi_resource
+
+URI = "utente://preferenze"
+
+
+@pytest.fixture
+def server_preferenze(tmp_path):
+    file_preferenze = tmp_path / "preferenze.json"
+    file_preferenze.write_text('{"lingua": "inglese"}', encoding="utf-8")
+    server_note = crea_server(
+        ArchivioNote(str(tmp_path / "note.db")), client_http=client_finto(), percorso_preferenze=file_preferenze
+    )
+    with avvia_server_mcp(server_note) as url:
+        yield url, file_preferenze
+
+
+def test_leggi_resource_restituisce_il_testo(server_preferenze):
+    url, _ = server_preferenze
+
+    assert leggi_resource(url, URI, 5) == '{"lingua": "inglese"}'
+
+
+def test_leggi_resource_file_mancante_errore_mcp(server_preferenze):
+    url, file_preferenze = server_preferenze
+    file_preferenze.unlink()
+
+    with pytest.raises(ErroreMcp) as errore:
+        leggi_resource(url, URI, 5)
+
+    assert "preferenze.json" in str(errore.value) and URI in str(errore.value)
+
+
+def test_leggi_resource_server_spento():
+    with pytest.raises(ErroreMcp):
+        leggi_resource(porta_chiusa(), URI, 2)
+
+
+def test_leggi_resource_server_muto_rispetta_il_timeout():
+    with porta_muta() as url:
+        inizio = time.monotonic()
+        with pytest.raises(ErroreMcp):
+            leggi_resource(url, URI, 1)
+
+    assert time.monotonic() - inizio < 5
+
+
+def test_leggi_resource_non_crea_strumenti(server_preferenze):
+    url, _ = server_preferenze
+
+    strumenti = scopri_strumenti(url)
+
+    assert sorted(s.name for s in strumenti) == ["aggiungi_nota", "elenca_note", "elimina_nota", "meteo"]
+    assert not any("preferenze" in s.name or "utente://" in s.description for s in strumenti)
