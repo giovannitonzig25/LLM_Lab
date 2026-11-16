@@ -9,12 +9,17 @@ Chiamate FastMCP 4.1.6 effettivamente usate (verificate in T1/T2):
   `fastmcp.exceptions.ToolError`; una connessione impossibile solleva `RuntimeError`.
 - `await client.read_resource(uri)` (Step 4, verificata il 2026-11-16): lista di contenuti con `.text`;
   un errore del server arriva come `MCPError`.
-Nome, descrizione e schema non sono mai scritti a mano qui: arrivano da `list_tools()`.
+- `await client.list_prompts()` e `await client.get_prompt(nome, argomenti)` (Step 5, verificate il 2026-11-16):
+  `Prompt` con `name`, `description`, `arguments` (`PromptArgument` con `name`, `description`, `required`);
+  `GetPromptResult.messages` con `role` e `content` (`.text` solo per i contenuti testuali); un `PromptError`
+  del server arriva come `MCPError` con il testo originale; un argomento sconosciuto è ignorato dal server.
+Nome, descrizione e schema non sono mai scritti a mano qui: arrivano da `list_tools()` e `list_prompts()`.
 """
 
 import asyncio
 import logging
 import threading
+from dataclasses import dataclass
 from collections.abc import Callable, Coroutine
 from typing import Any
 
@@ -216,3 +221,76 @@ def leggi_resource(url: str, uri: str, timeout: float = 10.0) -> str:
         return _esegui(_leggi(url, uri, timeout))
     except Exception as errore:
         raise ErroreMcp(f"lettura di {uri} impossibile su {url}: {_testo_errore(errore)}") from errore
+
+
+@dataclass(frozen=True)
+class ArgomentoPrompt:
+    """Argomento di un prompt MCP, copiato dalla discovery (Step 5, spec §6.1)."""
+
+    nome: str
+    descrizione: str
+    obbligatorio: bool
+
+
+@dataclass(frozen=True)
+class PromptMcp:
+    """Prompt MCP come lo pubblica il server: nome, descrizione e argomenti non sono mai scritti a mano qui."""
+
+    nome: str
+    descrizione: str
+    argomenti: tuple[ArgomentoPrompt, ...]
+
+
+async def _elenca_prompt(url: str, timeout: float) -> list:
+    async with asyncio.timeout(timeout):
+        async with Client(url, timeout=timeout) as client:
+            return await client.list_prompts()
+
+
+def elenca_prompt(url: str, timeout: float = 10.0) -> tuple[PromptMcp, ...]:
+    """Discovery dei prompt (Step 5), al momento del comando. I prompt non diventano mai strumenti né vanno a `bind_tools`."""
+    try:
+        scoperti = _esegui(_elenca_prompt(url, timeout))
+    except Exception as errore:
+        messaggio = f"discovery dei prompt impossibile su {url}: {_testo_errore(errore)}"
+        LOG.warning("%s", messaggio)
+        raise ErroreMcp(messaggio) from errore
+    prompt = tuple(
+        PromptMcp(
+            nome=p.name,
+            descrizione=p.description or "",
+            argomenti=tuple(
+                ArgomentoPrompt(nome=a.name, descrizione=a.description or "", obbligatorio=bool(a.required))
+                for a in (p.arguments or [])
+            ),
+        )
+        for p in scoperti
+    )
+    LOG.info("prompt scoperti su %s: %s", url, [p.nome for p in prompt])
+    return prompt
+
+
+async def _ottieni_prompt(url: str, nome: str, argomenti: dict[str, str], timeout: float) -> list:
+    async with asyncio.timeout(timeout):
+        async with Client(url, timeout=timeout) as client:
+            risultato = await client.get_prompt(nome, argomenti)
+    return risultato.messages
+
+
+def ottieni_prompt(url: str, nome: str, argomenti: dict[str, str], timeout: float = 10.0) -> list[tuple[str, str]]:
+    """Messaggi compilati dal server per il prompt `nome`, come coppie (ruolo, testo)."""
+    LOG.info("prompt richiamato: nome=%s argomenti=%s", nome, argomenti)
+    try:
+        messaggi = _esegui(_ottieni_prompt(url, nome, argomenti, timeout))
+        coppie = []
+        for messaggio in messaggi:
+            testo = getattr(messaggio.content, "text", None)
+            if not isinstance(testo, str):
+                raise ValueError(f"messaggio non testuale nel prompt {nome}")
+            coppie.append((str(messaggio.role), testo))
+    except Exception as errore:
+        messaggio = f"prompt {nome} non ottenuto da {url}: {_testo_errore(errore)}"
+        LOG.warning("%s", messaggio)
+        raise ErroreMcp(messaggio) from errore
+    LOG.info("prompt ottenuto: nome=%s messaggi=%s", nome, coppie)
+    return coppie

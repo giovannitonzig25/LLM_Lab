@@ -477,3 +477,82 @@ def test_leggi_resource_non_crea_strumenti(server_preferenze):
 
     assert sorted(s.name for s in strumenti) == ["aggiungi_nota", "elenca_note", "elimina_nota", "meteo"]
     assert not any("preferenze" in s.name or "utente://" in s.description for s in strumenti)
+
+
+# --- Step 5: prompt MCP (spec 2026-11-16-prompt-mcp-design.md §6) ---
+
+from fastmcp import FastMCP
+from fastmcp.prompts import Message
+
+from assistente.mcp_client import ArgomentoPrompt, PromptMcp, elenca_prompt, ottieni_prompt
+
+
+def test_elenca_prompt_copia_la_discovery(server, caplog):
+    url, _ = server
+
+    with caplog.at_level(logging.INFO, logger="assistente.mcp"):
+        prompt = elenca_prompt(url, 5)
+
+    assert isinstance(prompt, tuple)
+    per_nome = {p.nome: p for p in prompt}
+    spiega = per_nome["spiega"]
+    assert isinstance(spiega, PromptMcp)
+    assert spiega.descrizione.startswith("Spiega un argomento al livello scelto")
+    assert spiega.argomenti == (ArgomentoPrompt("argomento", "", True), ArgomentoPrompt("livello", "", False))
+    assert per_nome["riassumi_conversazione"].argomenti == (ArgomentoPrompt("stile", "", False),)
+    assert any("prompt scoperti" in r.getMessage() and "spiega" in r.getMessage() for r in caplog.records)
+
+
+def test_ottieni_prompt_restituisce_ruolo_e_testo(server, caplog):
+    url, _ = server
+
+    with caplog.at_level(logging.INFO, logger="assistente.mcp"):
+        messaggi = ottieni_prompt(url, "spiega", {"argomento": "MCP"}, 5)
+
+    assert len(messaggi) == 1
+    ruolo, testo = messaggi[0]
+    assert ruolo == "user"
+    assert testo.startswith("Spiega l'argomento «MCP» a livello base.")
+    righe = [r.getMessage() for r in caplog.records]
+    assert any("prompt richiamato" in r and "spiega" in r and "MCP" in r for r in righe)
+    assert any("prompt ottenuto" in r and "Spiega l'argomento" in r for r in righe)
+
+
+def test_ottieni_prompt_rifiutato_dal_server(server, caplog):
+    url, _ = server
+
+    with caplog.at_level(logging.WARNING, logger="assistente.mcp"), pytest.raises(ErroreMcp) as errore:
+        ottieni_prompt(url, "spiega", {"argomento": "x", "livello": "esperto"}, 5)
+
+    assert "livello non valido: esperto" in str(errore.value)
+    assert any(r.levelno == logging.WARNING and "esperto" in r.getMessage() for r in caplog.records)
+
+
+def test_prompt_porta_chiusa():
+    url = porta_chiusa()
+    with pytest.raises(ErroreMcp):
+        elenca_prompt(url, 2)
+    with pytest.raises(ErroreMcp):
+        ottieni_prompt(url, "spiega", {"argomento": "x"}, 2)
+
+
+def test_elenca_prompt_porta_muta_rispetta_il_timeout():
+    with porta_muta() as url:
+        inizio = time.monotonic()
+        with pytest.raises(ErroreMcp):
+            elenca_prompt(url, 0.5)
+
+    assert time.monotonic() - inizio < 5
+
+
+def test_ottieni_prompt_non_testuale():
+    prova = FastMCP("prova")
+
+    @prova.prompt
+    def immagine() -> list[Message]:
+        return [Message(Image(data=b"\x89PNG\r\n\x1a\n", format="png").to_image_content(), role="user")]
+
+    with avvia_server_mcp(prova) as url, pytest.raises(ErroreMcp) as errore:
+        ottieni_prompt(url, "immagine", {}, 5)
+
+    assert "messaggio non testuale" in str(errore.value)

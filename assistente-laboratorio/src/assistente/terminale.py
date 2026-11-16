@@ -1,7 +1,7 @@
 """Interfaccia da terminale: ciclo domanda/risposta."""
 import logging
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import openai
@@ -10,7 +10,8 @@ from langchain_core.messages import BaseMessage, HumanMessage
 
 from assistente.config import ErroreConfigurazione, carica_config
 from assistente.grafo import costruisci_grafo
-from assistente.mcp_client import leggi_resource
+from assistente.comandi import esegui_comando
+from assistente.mcp_client import PromptMcp, elenca_prompt, leggi_resource, ottieni_prompt
 from assistente.modello import crea_classificatore, crea_modello, crea_revisore, crea_riassuntore
 from assistente.preferenze import carica_preferenze
 from assistente.strumenti import componi_strumenti
@@ -60,11 +61,24 @@ class Sessione:
 def esegui_turno(
     grafo, sessione: Sessione, domanda: str, max_passaggi: int, *, max_revisioni: int
 ) -> tuple[Sessione, str]:
-    """Esegue un turno. Se fallisce restituisce la sessione ricevuta, lo stesso oggetto (spec Step 3 §5.3)."""
+    """Esegue il turno di una domanda scritta dall'utente."""
+    return esegui_turno_messaggi(grafo, sessione, [HumanMessage(domanda)], max_passaggi, max_revisioni=max_revisioni)
+
+
+def esegui_turno_messaggi(
+    grafo, sessione: Sessione, nuovi: Sequence[BaseMessage], max_passaggi: int, *, max_revisioni: int
+) -> tuple[Sessione, str]:
+    """Esegue un turno con i messaggi `nuovi` (una domanda o i messaggi di un prompt MCP, spec Step 5 §10.1).
+
+    Se fallisce restituisce la sessione ricevuta, lo stesso oggetto (spec Step 3 §5.3).
+    """
     try:
         esito = grafo.invoke(
             # Copie: add_messages assegna gli id sugli oggetti ricevuti; la sessione non va mai toccata (§5.3).
-            {"messages": [*(m.model_copy() for m in sessione.messaggi), HumanMessage(domanda)], "riassunto": sessione.riassunto},
+            {
+                "messages": [*(m.model_copy() for m in sessione.messaggi), *(m.model_copy() for m in nuovi)],
+                "riassunto": sessione.riassunto,
+            },
             config={"recursion_limit": limite_ricorsione(max_passaggi, max_revisioni)},
         )
     except GraphRecursionError:
@@ -89,8 +103,16 @@ def ripulisci_input(testo: str) -> str:
 
 
 def esegui_chat(
-    grafo, max_passaggi: int, leggi: Callable[[], str], scrivi: Callable[[str], None], *, max_revisioni: int
+    grafo,
+    max_passaggi: int,
+    leggi: Callable[[], str],
+    scrivi: Callable[[str], None],
+    *,
+    max_revisioni: int,
+    elenca: Callable[[], Sequence[PromptMcp]] | None = None,
+    ottieni: Callable[[str, dict[str, str]], list[tuple[str, str]]] | None = None,
 ) -> None:
+    """Ciclo della chat. Le righe che iniziano con `/` sono comandi (Step 5): non vanno mai al modello così come sono."""
     sessione = Sessione()  # nessuna persistenza tra esecuzioni
     while True:
         try:
@@ -99,7 +121,17 @@ def esegui_chat(
                 return
             if not domanda:
                 continue
-            sessione, testo = esegui_turno(grafo, sessione, domanda, max_passaggi, max_revisioni=max_revisioni)
+            if domanda.startswith("/"):
+                righe, messaggi = esegui_comando(domanda, elenca, ottieni)
+                for riga in righe:
+                    scrivi(riga)
+                if not messaggi:
+                    continue
+                sessione, testo = esegui_turno_messaggi(
+                    grafo, sessione, messaggi, max_passaggi, max_revisioni=max_revisioni
+                )
+            else:
+                sessione, testo = esegui_turno(grafo, sessione, domanda, max_passaggi, max_revisioni=max_revisioni)
         except (EOFError, KeyboardInterrupt):
             return
         scrivi(testo)
@@ -124,7 +156,12 @@ def main() -> int:
         riassuntore=crea_riassuntore(config), soglia_riassunto=config.soglia_riassunto, preferenze=preferenze,
     )
     # Lo stesso valore va al grafo (Revisore) e al turno (recursion_limit): spec §17.
-    esegui_chat(grafo, config.max_passaggi, lambda: input("Tu: "), print, max_revisioni=config.max_revisioni)
+    # Prompt MCP (Step 5): discovery al momento del comando, con URL e timeout degli strumenti MCP.
+    esegui_chat(
+        grafo, config.max_passaggi, lambda: input("Tu: "), print, max_revisioni=config.max_revisioni,
+        elenca=lambda: elenca_prompt(config.mcp_url, config.mcp_timeout),
+        ottieni=lambda nome, argomenti: ottieni_prompt(config.mcp_url, nome, argomenti, config.mcp_timeout),
+    )
     return 0
 
 

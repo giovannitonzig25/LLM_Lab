@@ -315,3 +315,160 @@ def test_main_bind_tools_senza_resource(monkeypatch, tmp_path):
     assert "America/New_York" in registrati[0].invoke({})
     # Le stesse preferenze arrivano in cima al prompt di sistema dell'agente (T5).
     assert "Rispondi sempre in inglese." in modello.chiamate[0][0].content
+
+
+# --- Step 5: prompt MCP richiamati dalla CLI (spec 2026-11-16-prompt-mcp-design.md §10–§12) ---
+
+from langchain_core.messages import ToolMessage
+from langchain_core.tools import StructuredTool
+from langgraph.errors import GraphRecursionError
+
+from assistente.comandi import CLIENT_NON_CONFIGURATO, COMANDO_SCONOSCIUTO
+from assistente.mcp_client import ArgomentoPrompt, ErroreMcp, PromptMcp
+from assistente.terminale import esegui_turno_messaggi
+from finti import ClassificatoreSimulato, valutazione
+
+SPIEGA = PromptMcp(
+    "spiega", "Spiega.", (ArgomentoPrompt("argomento", "", True), ArgomentoPrompt("livello", "", False))
+)
+
+
+def elenca_finto():
+    return (SPIEGA,)
+
+
+def ottieni_che_fallisce(nome, argomenti):
+    raise ErroreMcp("server spento")
+
+
+def ottieni_finto(nome, argomenti):
+    return [("user", f"Spiega {argomenti['argomento']}")]
+
+
+def chat(grafo, righe, elenca=elenca_finto, ottieni=ottieni_finto):
+    coda = list(righe)
+    stampato = []
+    esegui_chat(grafo, 6, lambda: coda.pop(0), stampato.append, max_revisioni=1, elenca=elenca, ottieni=ottieni)
+    return stampato
+
+
+class GrafoRegistra:
+    """Grafo spia che accetta `config` come quello vero e registra lo stato ricevuto."""
+
+    def __init__(self):
+        self.stati = []
+
+    def invoke(self, stato, config=None):
+        self.stati.append(stato)
+        return {"messages": [*stato["messages"], AIMessage("x")], "riassunto": stato["riassunto"]}
+
+
+@pytest.mark.parametrize(
+    "riga, ottieni, elenca, attesa",
+    [
+        ("/prompts", ottieni_finto, elenca_finto, "Prompt disponibili:"),
+        ("/aiuto", ottieni_finto, elenca_finto, COMANDO_SCONOSCIUTO),
+        ("/prompt spiega", ottieni_finto, elenca_finto, "Argomenti obbligatori mancanti: argomento."),
+        ("/prompt spiega argomento=x", ottieni_che_fallisce, elenca_finto, "Prompt non eseguito: server spento"),
+        ("/prompts", ottieni_finto, None, CLIENT_NON_CONFIGURATO),
+    ],
+)
+def test_comandi_non_invocano_il_grafo(riga, ottieni, elenca, attesa):
+    spia = GrafoRegistra()
+
+    stampato = chat(spia, [riga, "esci"], elenca=elenca, ottieni=ottieni)
+
+    assert spia.stati == []
+    assert any(attesa in r for r in stampato)
+
+
+def test_comandi_senza_client_nella_chat_di_sempre():
+    spia = GrafoRegistra()
+
+    assert esegui(spia, ["/prompts", "esci"]) == [CLIENT_NON_CONFIGURATO]
+    assert spia.stati == []
+
+
+def test_prompt_valido_passa_al_grafo():
+    spia = GrafoRegistra()
+
+    stampato = chat(spia, ["/prompt spiega argomento=MCP", "esci"])
+
+    ultimo = spia.stati[0]["messages"][-1]
+    assert isinstance(ultimo, HumanMessage) and ultimo.content == "Spiega MCP"
+    assert stampato == ["[prompt spiega] Spiega MCP", "x"]
+
+
+def test_domanda_dopo_un_prompt_vede_il_prompt():
+    grafo, modello = grafo_con("risposta al prompt", "risposta 2")
+
+    chat(grafo, ["/prompt spiega argomento=MCP", "e poi?", "esci"])
+
+    contenuti = [m.content for m in modello.chiamate[1][1:]]
+    assert contenuti == ["Spiega MCP", "risposta al prompt", "e poi?"]
+
+
+class GrafoCheFallisce:
+    def invoke(self, stato, config=None):
+        raise GraphRecursionError("limite")
+
+
+def test_turno_di_prompt_fallito_lascia_la_sessione():
+    sessione = Sessione((HumanMessage("Ciao"), AIMessage("Salve")))
+
+    nuova, testo = esegui_turno_messaggi(GrafoCheFallisce(), sessione, [HumanMessage("Spiega MCP")], 6, max_revisioni=1)
+
+    assert nuova is sessione
+    assert "limite" in testo
+
+
+def test_prompt_attraversa_tutto_il_grafo():
+    chiamate_strumento = []
+
+    def strumento_finto() -> str:
+        """Strumento di prova."""
+        chiamate_strumento.append(True)
+        return "ok"
+
+    strumento = StructuredTool.from_function(strumento_finto, name="strumento_finto")
+    modello = ModelloSimulato([
+        AIMessage("", tool_calls=[{"name": "strumento_finto", "args": {}, "id": "c1", "type": "tool_call"}]),
+        AIMessage("risposta finale"),
+    ])
+    classificatore, revisore = in_ambito(), ClassificatoreSimulato([valutazione(True, "ok")], True)
+    grafo = costruisci_grafo(
+        modello, [strumento], classificatore=classificatore, ambito=AMBITO_TEST, revisore=revisore, max_revisioni=1,
+        riassuntore=riassuntore_inerte(), soglia_riassunto=SOGLIA_RIASSUNTO_PREDEFINITA,
+    )
+    prompt = HumanMessage("Spiega l'argomento «MCP» a livello base.")
+
+    sessione, testo = esegui_turno_messaggi(grafo, Sessione(), [prompt], 6, max_revisioni=1)
+
+    assert testo == "risposta finale"
+    assert len(classificatore.chiamate) == 1 and len(revisore.chiamate) == 1
+    assert chiamate_strumento == [True]
+    assert sessione.messaggi[0].content == prompt.content
+    assert any(isinstance(m, ToolMessage) for m in sessione.messaggi)
+
+
+def test_main_prompt_spiega_dal_server_reale(monkeypatch, tmp_path, capsys):
+    modello = ModelloSimulato([AIMessage("MCP è un protocollo.")])
+    with avvia_server_mcp(crea_server(ArchivioNote(str(tmp_path / "note.db")))) as url:
+        monkeypatch.setenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
+        monkeypatch.setenv("LM_STUDIO_MODEL", "m")
+        monkeypatch.setenv("AMBITO_AGENTE", "a")
+        monkeypatch.setenv("MCP_URL", url)
+        monkeypatch.setattr(terminale, "crea_classificatore", lambda config: in_ambito())
+        monkeypatch.setattr(terminale, "crea_revisore", lambda config: approva_sempre())
+        monkeypatch.setattr(terminale, "crea_modello", lambda config, strumenti: modello)
+        righe = iter(["/prompts", '/prompt spiega argomento="Model Context Protocol"', "esci"])
+        monkeypatch.setattr("builtins.input", lambda prompt="": next(righe))
+        assert terminale.main() == 0
+
+    uscita = capsys.readouterr().out
+    assert "Prompt disponibili:" in uscita
+    assert "[prompt spiega] Spiega l'argomento «Model Context Protocol» a livello base." in uscita
+    assert "MCP è un protocollo." in uscita
+    ultimo = modello.chiamate[0][-1]
+    assert isinstance(ultimo, HumanMessage)
+    assert ultimo.content.startswith("Spiega l'argomento «Model Context Protocol» a livello base.")
