@@ -591,3 +591,36 @@ Router 28,2–51,8 s (escluso il caso anomalo), Revisore 5,9–13,5 s; sessioni 
 
 - Server che accetta la connessione ma non risponde: coperto dal test con `porta_muta()`.
 - JSON non valido o non oggetto, chiavi sconosciute, `lingua` non valida: coperti dai test simulati.
+
+## Ramo `feat/prompt-mcp` — Step 5 Lezione 6: Prompt MCP, comandi riusabili nella CLI (2026-11-16/17)
+
+Prove reali con LM Studio (`google/gemma-4-e2b`), **distinte dai test simulati** (`tests/test_server_mcp.py`, `test_mcp_client.py`, `test_comandi.py`, `test_terminale.py`). Le righe sono state passate da uno script nella scratchpad che avvia server MCP e servizio HTTP e pilota `python -m assistente.terminale` via stdin; gli esiti sono stati riletti da stdout e dai log su stderr.
+
+- **Dati:** `NOTE_DB_PATH` e `PREFERENZE_PATH` puntavano a file temporanei nella scratchpad (preferenze dell'esempio: italiano, Europe/Rome, sintetico). Hash di `data/note.db` (`5fa44468…`) e `data/preferenze.json` (`7b80d855…`) uguali prima e dopo.
+- **`.env` modificato con l'autorizzazione dell'utente:** dopo la prima R2 l'ambito di `AMBITO_AGENTE` è stato esteso (in `.env` e `.env.example`) con «; spiegazioni introduttive di concetti informatici, come i protocolli usati dagli assistenti.».
+
+| # | Atteso | Effettivo | Esito |
+|---|---|---|---|
+| R1 | `/prompts`: nome, descrizione e argomenti dei due prompt dal server | `Prompt disponibili:` con `spiega` (`argomento` obbligatorio, `livello` facoltativo) e `riassumi_conversazione` (`stile` facoltativo), descrizioni del server | **riuscita** |
+| R2 | `/prompt spiega argomento="Model Context Protocol" livello=base`: risposta adeguata al livello; log con prompt, argomenti e messaggi | Log `prompt richiamato: nome=spiega argomenti={'argomento': 'Model Context Protocol', 'livello': 'base'}` e `prompt ottenuto: … messaggi=[('user', "Spiega l'argomento «Model Context Protocol» a livello base. …")]`; il terminale mostra `[prompt spiega] …`. **Con l'ambito precedente il Router ha rifiutato** (`fuori_ambito`, «richiesta di spiegazione tecnica», 79,8 s). Con l'ambito esteso: Router `conversazione` (47,4 s), agente, Revisore coerente (11,3 s); risposta con linguaggio semplice ed esempio concreto, più lunga dello stile `sintetico` (il livello prevale). **Contenuto inesatto:** MCP descritto come «regole per gestire il contesto della conversazione» | **riuscita** per il percorso e il livello; contenuto limitato dalla conoscenza del modello |
+| R3 | `riassumi_conversazione` dopo 2 turni (ora a Tokyo, 10 km in miglia), senza compressione | Router `conversazione` («richiesta di riassunto», 51,4 s), nessuno strumento, Revisore coerente (10,1 s): «La conversazione è consistuta nella richiesta dell'ora a Tokyo e nella conversione di 10 chilometri in miglia.» | **riuscita** |
+| R4 | Come R3 con `SOGLIA_RIASSUNTO=4`, dopo una compressione: il riassunto comprende anche il turno compresso | 3 turni (saluto con nome e obiettivo, 5 miglia in km, giorni lavorativi), poi `/prompt riassumi_conversazione stile="elenco puntato"`: il Riassunto comprime 1 turno (13 → 11 messaggi, 16,0 s), Router e Revisore accettano, elenco puntato rispettato. **Il turno compresso (nome Giulia, obiettivo) manca** dal riassunto finale. Ripetuta dopo il primo tentativo sul testo di A.2 (commit `2d868e9`, «Includi sia i turni compresi nel riassunto…»): stesso esito | **non riuscita** per il turno compresso; limite documentato. Secondo tentativo non eseguito per decisione dell'utente |
+| R5 | Argomento obbligatorio mancante; argomento sconosciuto; livello non ammesso | `/prompt spiega` → «Argomenti obbligatori mancanti: argomento.» + riga d'uso; `argomento=x pippo=1` → «Argomenti sconosciuti: pippo. Argomenti accettati: argomento, livello.»; due `WARNING assistente.comandi: richiesta respinta …`, nessuna riga di Router o agente. `livello=esperto` → «Prompt non eseguito: … livello non valido: esperto (valori ammessi: base, intermedio, avanzato)» | **riuscita** |
+| R6 | Server MCP spento: avvio ridotto, comandi con messaggio | Avvisi di avvio ridotto e preferenze predefinite; `/prompts` e `/prompt spiega argomento=MCP` → «Prompt MCP non disponibili: discovery dei prompt impossibile su http://localhost:8001/mcp: Client failed to connect …»; nessun turno | **riuscita** |
+| R7 | Docker Compose: `/prompts` e `/prompt spiega` nel container | Non eseguita per decisione dell'utente (tempi delle prove) | **non verificata** |
+
+### Comportamenti inattesi (registrati, non nascosti)
+
+- **Durata della prima R4:** 2339 s, mentre le durate registrate di Router, Revisore e Riassunto sommano circa 520 s; il resto è andato in chiamate all'agente, che non hanno una durata nel log. La ripetizione della stessa sessione ha richiesto 780 s. Probabile l'anomalia di ragionamento lungo già osservata negli step precedenti.
+- **Falso rifiuto del Revisore** sul turno dei giorni lavorativi della prima R4: risposta corretta (10 giorni) respinta due volte, `WARNING` di limite. Comportamento già documentato negli step precedenti.
+- **Refuso del modello** in R3 («consistuta»).
+
+### Latenze (sessioni locali)
+
+Router 42,5–79,8 s, Revisore 7,9–71,8 s, Riassunto (compressione) 16,0 s. Sessioni: R1+R2+R5 (prima R2 rifiutata) 91 s; R2 con ambito esteso 130–155 s; R3 304 s; R4 780–2339 s; R6 30 s. Discovery e compilazione dei prompt senza latenza percepibile.
+
+### Non verificati dal vivo
+
+- R7 in Docker (Compose non è cambiato; i prompt viaggiano sullo stesso server MCP).
+- Server che accetta la connessione ma non risponde: coperto dal test con `porta_muta()`.
+- Messaggio non testuale, ruoli non riconosciuti, apostrofi e barre rovesciate nei valori: coperti dai test simulati.

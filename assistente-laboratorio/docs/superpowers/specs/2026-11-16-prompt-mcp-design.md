@@ -333,6 +333,7 @@ Una prova per ogni modifica di testo dei prompt; al massimo 2 tentativi sul comp
 - Il Router può rifiutare `spiega` su argomenti fuori ambito (voluto) e, per errore, `riassumi_conversazione`.
 - Un `PromptError` del server lascia nel log del server la traccia d'errore di FastMCP.
 - Ogni `/prompt` fa due richieste al server (`list_prompts` e `get_prompt`).
+- **Dalle prove reali (2026-11-16/17):** con l'ambito iniziale il Router rifiutava `spiega` su MCP; l'utente ha approvato l'estensione di `AMBITO_AGENTE` («spiegazioni introduttive di concetti informatici, come i protocolli usati dagli assistenti»). Dopo una compressione `riassumi_conversazione` omette il turno compresso anche dopo il primo tentativo su A.2; il secondo tentativo non è stato eseguito per decisione dell'utente. R7 (Docker) non verificata dal vivo.
 
 ## 17. Builder check della specifica (2026-11-16)
 

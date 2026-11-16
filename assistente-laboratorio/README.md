@@ -141,6 +141,38 @@ La riga `preferenze della sessione` c'è sempre e dice per ogni valore se viene 
 
 **Docker:** `server-mcp` monta la cartella `./data` dell'host in sola lettura su `/preferenze` (`PREFERENZE_PATH=/preferenze/preferenze.json`). Crea il file prima dell'avvio; dopo una modifica basta un nuovo `docker compose run --rm assistente`, senza `docker compose build`.
 
+## Comandi della CLI: prompt MCP
+
+Il server MCP espone due **prompt**: modelli di istruzioni con argomenti, salvati sul server. Non li sceglie il modello e non sono strumenti: li richiami **tu** con un comando che comincia con `/`. L'agente compila il prompt tramite il server e manda il testo ottenuto al grafo come una domanda qualsiasi, quindi passa anche da Router, strumenti e Revisore.
+
+| Comando | Effetto |
+|---|---|
+| `/prompts` | elenca i prompt del server con descrizione e argomenti (obbligatori o facoltativi) |
+| `/prompt nome argomento=valore …` | richiama un prompt; i valori con spazi vanno tra **virgolette doppie** |
+
+Esempi:
+
+```
+/prompt spiega argomento="Model Context Protocol" livello=base
+/prompt riassumi_conversazione
+/prompt riassumi_conversazione stile="elenco puntato"
+```
+
+- `spiega(argomento, livello)`: `livello` vale `base` (predefinito), `intermedio` o `avanzato`. Il livello richiesto prevale sullo stile delle preferenze.
+- `riassumi_conversazione(stile)`: `stile` è testo libero (predefinito `breve`) e riassume la sessione in corso.
+
+Prima di chiamare il server l'agente **controlla la richiesta** rispetto all'elenco dei prompt: un prompt sconosciuto, un argomento obbligatorio mancante, un argomento sconosciuto o un valore vuoto bloccano la richiesta con un messaggio e la riga d'uso, senza chiamare il modello e senza toccare la cronologia. Un valore non ammesso dal server (per esempio `livello=esperto`) dà «Prompt non eseguito: …». Prima della risposta il terminale mostra il testo compilato, preceduto da `[prompt nome]`.
+
+Ogni comando interroga il server al momento: se il server MCP è spento i comandi rispondono «Prompt MCP non disponibili: …» e la chat continua; quando il server riparte i prompt tornano disponibili senza riavviare l'agente. Ogni riga che comincia con `/` è un comando: un comando sconosciuto non arriva al modello.
+
+**Log:** `assistente.mcp` registra i prompt scoperti, il prompt richiamato con gli argomenti e i messaggi ottenuti dal server; `assistente.comandi` registra le richieste respinte dal controllo.
+
+```
+INFO assistente.mcp: prompt richiamato: nome=spiega argomenti={'argomento': 'Model Context Protocol', 'livello': 'base'}
+INFO assistente.mcp: prompt ottenuto: nome=spiega messaggi=[('user', "Spiega l'argomento «Model Context Protocol» a livello base. …")]
+WARNING assistente.comandi: richiesta respinta: prompt=spiega argomenti={} problemi=['Argomenti obbligatori mancanti: argomento.', …]
+```
+
 ## Avvio con Docker Compose
 
 LM Studio resta sull'host; nel container l'indirizzo è `http://host.docker.internal:1234/v1` (Compose lo imposta al posto di quello di `.env`; per un'altra porta o indirizzo definisci `LM_STUDIO_DOCKER_URL` in `.env`). `LM_STUDIO_MODEL`, `MAX_PASSAGGI`, `MAX_REVISIONI` e `SOGLIA_RIASSUNTO` vengono da `.env`.
@@ -339,13 +371,14 @@ Quando il limite è raggiunto il turno viene scartato: la cronologia torna a com
 
 ```
 src/assistente/   config, modello (LM Studio), grafo (LangGraph), terminale
+                  comandi (comandi /prompts e /prompt: scomposizione, controllo, conversione)
                   riassunto (Riassunto della cronologia: turni, trascrizione, prompt, nodo)
                   router (Router di ambito: contesto, prompt, rifiuto)
                   preferenze (preferenze dell'utente dalla resource MCP: validazione, prompt)
                   revisore (Revisore della risposta: giudizio, osservazione, contesto dell'agente)
                   strumenti (orologio e composizione), unita, calcolatrice
                   mcp_client, verifica_mcp (client MCP e controllo di salute)
-                  server_mcp, note, meteo (server MCP)
+                  server_mcp, note, meteo (server MCP: strumenti, resource e prompt)
                   strumenti_http, servizi_http/ (wrapper e servizio FastAPI)
 tests/            test automatici, senza rete né modello
 prove_reali/      prove con LM Studio e Docker, da eseguire a mano
@@ -387,10 +420,15 @@ docs/superpowers/ specifica e piano
 - **Preferenze e testi fissi:** il rifiuto del Router, gli avvisi e le conferme restano in italiano qualunque sia la `lingua` preferita.
 - **Preferenze e modello:** il programma garantisce solo il fuso dell'orologio senza argomenti; rispettare lingua e stile dipende dal modello locale. `lingua` è testo libero e non viene verificata.
 - **Preferenze per sessione:** vengono lette solo all'avvio; una modifica del file vale dalla sessione successiva. Con il server spento la lettura fa un tentativo in più (al massimo `MCP_TIMEOUT` secondi).
+- **Prompt e ambito:** il prompt passa dal Router come ogni domanda. `spiega` su un argomento fuori da `AMBITO_AGENTE` riceve il rifiuto: per questo l'ambito di `.env.example` comprende le «spiegazioni introduttive di concetti informatici». Chi ha un `.env` precedente deve aggiungere la stessa frase.
+- **Prompt e modello:** il livello di `spiega` (linguaggio, esempio) viene rispettato, ma il contenuto dipende da ciò che sa il modello locale: nelle prove `google/gemma-4-e2b` ha descritto MCP in modo inesatto.
+- **Riassunto della conversazione dopo la compressione:** `riassumi_conversazione` riporta bene i turni ancora nella cronologia, ma nelle prove ha omesso il turno già compresso dal Riassunto (presente solo nel riassunto delle istruzioni di sistema), anche con un testo che chiede esplicitamente di includerlo.
+- **Comandi:** ogni riga che comincia con `/` è un comando, quindi una domanda che comincia con `/` non arriva al modello. Solo le virgolette doppie delimitano un valore, e un valore non può contenere virgolette doppie. I messaggi dei comandi sono in italiano qualunque sia la lingua preferita. Ogni `/prompt` fa due richieste al server.
 - **Docker e cartella `data/`:** `server-mcp` vede tutta la cartella `data/` dell'host in sola lettura, compreso il `note.db` locale, che non usa (le note in Docker stanno nel volume `dati-note`).
 
 ## Diagnosi
 
+- **Prompt rifiutato dal Router:** il testo compilato è fuori da `AMBITO_AGENTE`; controlla l'ambito nel tuo `.env`. Se un valore non ammesso dal server dà «Prompt non eseguito», nei log del server compare anche il traceback di FastMCP: è atteso.
 - **Preferenze ignorate:** cerca nei log dell'agente la riga `preferenze della sessione`: `(predefinito)` indica il campo non letto, e il `WARNING` precedente dice perché. Se il file manca, nei log del server compare anche il traceback di FastMCP con `ResourceError`: è atteso.
 - **Variabile mancante:** il programma lo dice e termina con codice 1.
 - **«Non riesco a ottenere una risposta dal server»:** LM Studio è spento o `LM_STUDIO_BASE_URL` è sbagliato. La chat resta aperta: riavviato il server, si può riprovare.
