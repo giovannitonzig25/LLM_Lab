@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Assistente del laboratorio</title>
+  <link rel="stylesheet" href="/static/stile.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <aside class="laterale">
+    <div class="intestazione-laterale">
+      <h1>Assistente</h1>
+      <button id="nuova-chat" class="primario" type="button">+ Nuova chat</button>
+    </div>
+    <ul id="elenco-chat" class="elenco" aria-label="Chat salvate"></ul>
+    <p id="elenco-vuoto" class="vuoto" hidden>Nessuna chat salvata.</p>
+  </aside>
+
+  <main class="principale">
+    <header class="intestazione-chat">
+      <h2 id="titolo-chat">Nuova conversazione</h2>
+    </header>
+
+    <section id="messaggi" class="messaggi" aria-live="polite">
+      <div id="benvenuto" class="benvenuto">
+        <p><strong>Ciao!</strong> Scrivi una domanda qui sotto per iniziare una nuova chat,
+          oppure scegline una dall'elenco.</p>
+        <p class="nota">Posso aiutarti con data e ora, meteo, calcoli e conversioni, scadenze,
+          catalogo dei corsi e note personali. Una risposta può richiedere qualche minuto.</p>
+      </div>
+    </section>
+
+    <div id="attesa" class="attesa" hidden>
+      <span class="puntini" aria-hidden="true"><i></i><i></i><i></i></span>
+      L'assistente sta rispondendo… (può richiedere qualche minuto)
+    </div>
+
+    <div id="errore" class="errore" role="alert" hidden>
+      <span id="testo-errore"></span>
+      <button id="chiudi-errore" type="button" class="chiudi" aria-label="Chiudi">×</button>
+    </div>
+
+    <form id="modulo" class="modulo">
+      <textarea id="domanda" rows="2" placeholder="Scrivi una domanda… (Invio per inviare, Maiusc+Invio per andare a capo)" required></textarea>
+      <button id="invia" class="primario" type="submit">Invia</button>
+    </form>
+  </main>
+
+  <dialog id="conferma">
+    <form method="dialog">
+      <h3>Serve la tua conferma</h3>
+      <p>L'assistente vuole eseguire un'operazione che cancella dati:</p>
+      <ul id="elenco-conferme" class="elenco-conferme"></ul>
+      <p class="nota">Se annulli, non viene eseguito né salvato nulla.</p>
+      <div class="pulsanti">
+        <button value="annulla" type="submit">Annulla</button>
+        <button value="conferma" type="submit" class="pericolo">Conferma</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>
