@@ -46,6 +46,8 @@ services:
   agente:
     # Step 6: l'agente come servizio HTTP; la CLI (`assistente`) è un suo client.
     build: .
+    # Nome fisso: la stessa immagine serve anche alla CLI (`assistente`).
+    image: assistente-laboratorio-agente
     command: ["python", "-m", "assistente.servizio_agente"]
     env_file: .env
     # Step 9: l'agente non è esposto; lo raggiungono solo back-end e CLI sulla rete interna.
@@ -83,7 +85,10 @@ services:
     # CLI: conserva la conversazione e la manda all'agente a ogni turno.
     # Profilo "cli": `docker compose up` non la avvia; `docker compose run --rm assistente` sì.
     profiles: ["cli"]
-    build: .
+    # Immagine dell'agente (stesso Dockerfile), costruita da `docker compose build` anche se il
+    # profilo esclude questo servizio: la CLI non resta mai con un'immagine vecchia.
+    image: assistente-laboratorio-agente
+    pull_policy: never
     stdin_open: true
     tty: true
     depends_on:
