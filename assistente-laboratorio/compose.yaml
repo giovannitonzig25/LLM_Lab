@@ -15,8 +15,7 @@ services:
       # Cartella e non singolo file: se il file manca Docker non crea una cartella al suo posto,
       # e le modifiche salvate da qualunque editor si vedono subito (sola lettura).
       - ./data:/preferenze:ro
-    ports:
-      - "127.0.0.1:8001:8001"
+    # Step 9: nessuna porta sull'host, raggiungibile solo dall'agente sulla rete interna.
     healthcheck:
       # Vera discovery MCP: una semplice porta aperta non basta.
       test: ["CMD", "python", "-m", "assistente.verifica_mcp"]
@@ -31,8 +30,7 @@ services:
     environment:
       SERVIZI_HOST: 0.0.0.0
       SERVIZI_PORT: "8000"
-    ports:
-      - "127.0.0.1:8000:8000"
+    # Step 9: nessuna porta sull'host, raggiungibile solo dall'agente sulla rete interna.
     healthcheck:
       # Richiesta HTTP reale a /salute (non una semplice connessione TCP).
       test:
@@ -50,8 +48,7 @@ services:
     build: .
     command: ["python", "-m", "assistente.servizio_agente"]
     env_file: .env
-    ports:
-      - "127.0.0.1:8002:8002"
+    # Step 9: l'agente non è esposto; lo raggiungono solo back-end e CLI sulla rete interna.
     depends_on:
       server-mcp:
         # Mai service_healthy: con il server fermo o non sano l'agente deve partire lo stesso
@@ -84,6 +81,8 @@ services:
 
   assistente:
     # CLI: conserva la conversazione e la manda all'agente a ogni turno.
+    # Profilo "cli": `docker compose up` non la avvia; `docker compose run --rm assistente` sì.
+    profiles: ["cli"]
     build: .
     stdin_open: true
     tty: true
@@ -95,7 +94,7 @@ services:
       AGENTE_URL: http://agente:8002
 
   postgres:
-    # Step 7: database delle chat del back-end (il back-end per ora si avvia in locale).
+    # Step 7: database delle chat del back-end (servizio `backend` o back-end avviato in locale).
     image: postgres:17.6
     # POSTGRES_USER, POSTGRES_PASSWORD e POSTGRES_DB da .env (credenziali mai nel file Compose).
     env_file: .env
@@ -109,6 +108,42 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  backend:
+    # Step 9: API delle chat; unico punto di contatto del front-end. Nessuna porta sull'host.
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    # Da .env: POSTGRES_* (per comporre DATABASE_URL) e le variabili facoltative.
+    # I valori sotto prevalgono su quelli locali di .env (per esempio DATABASE_URL su 127.0.0.1:5433).
+    env_file: .env
+    environment:
+      # Composta dalle variabili di .env: nessuna credenziale scritta in questo file.
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      AGENTE_URL: http://agente:8002
+      BACKEND_HOST: 0.0.0.0
+      BACKEND_PORT: "8003"
+    depends_on:
+      postgres:
+        # Senza database il back-end esce con codice 1: parte solo a database pronto.
+        condition: service_healthy
+      agente:
+        condition: service_started
+
+  frontend:
+    # Step 9: pagina di chat e inoltro /api/... al back-end; unica porta per il browser.
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    environment:
+      BACKEND_URL: http://backend:8003
+      FRONTEND_HOST: 0.0.0.0
+      FRONTEND_PORT: "8004"
+    ports:
+      - "127.0.0.1:8004:8004"
+    depends_on:
+      backend:
+        condition: service_started
 
 volumes:
   dati-note:
