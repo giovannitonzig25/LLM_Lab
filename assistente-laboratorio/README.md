@@ -49,6 +49,8 @@ Lo script elenca gli identificativi restituiti da `GET /v1/models` ed esce con e
 
 Lato servizio dell'agente (`python -m assistente.servizio_agente`): `AGENTE_HOST` (predefinito `127.0.0.1`), `AGENTE_PORT` (predefinito `8002`); tutte le variabili della tabella sopra si leggono qui. Lato CLI (`python -m assistente.terminale`): solo `AGENTE_URL` (predefinito `http://localhost:8002`).
 
+Lato back-end delle chat (`python -m assistente.servizio_backend`, vedi «Back-end delle chat»): `DATABASE_URL` (obbligatoria), `AGENTE_URL` (predefinito `http://localhost:8002`), `BACKEND_HOST` (predefinito `127.0.0.1`), `BACKEND_PORT` (predefinito `8003`). Il servizio `postgres` di Compose legge `POSTGRES_USER`, `POSTGRES_PASSWORD` e `POSTGRES_DB` da `.env`: le credenziali di `DATABASE_URL` devono coincidere.
+
 Lato servizio HTTP (`python -m assistente.servizi_http`): `SERVIZI_HOST` (predefinito `127.0.0.1`), `SERVIZI_PORT` (predefinito `8000`).
 
 Lato server MCP (`python -m assistente.server_mcp`): `NOTE_DB_PATH` (file SQLite, predefinito `data/note.db`), `PREFERENZE_PATH` (file delle preferenze, predefinito `data/preferenze.json` nella cartella del progetto, vedi «Preferenze dell'utente»), `MCP_HOST` (predefinito `127.0.0.1`), `MCP_PORT` (predefinito `8001`).
@@ -81,6 +83,49 @@ Invoke-RestMethod http://localhost:8002/stato
 ```
 
 Errori: 503 se LM Studio non è raggiungibile (`{"errore": "Non riesco a ottenere una risposta dal server del modello…"}`), 502 per altri errori del modello, 422 per una richiesta malformata (anche `messaggio` e `messaggi` insieme). Il limite di passaggi e gli strumenti in errore rispondono 200, come nella CLI. Nel log dell'agente ogni turno chiude con `turno: esito=… strumenti=[…] durata=…`, preceduto dalle righe `strumento richiesto` / `strumento eseguito`.
+
+### Back-end delle chat
+
+Il back-end è l'unico punto di contatto del futuro front-end: gestisce le chat, le salva in PostgreSQL (tabelle `chat` e `messaggi`, create all'avvio) e inoltra le domande all'agente. Per ogni chat conserva anche `cronologia` e `riassunto` dell'agente, che rimanda a ogni domanda senza interpretarli e che non compaiono mai nelle sue risposte. La CLI resta client diretto dell'agente.
+
+Avvio (PostgreSQL in Docker, agente già attivo; variabili di `.env` caricate come sopra):
+
+```powershell
+docker compose up -d postgres                                                         # PostgreSQL su 127.0.0.1:5433
+$env:PYTHONPATH = "src"; .\.venv\Scripts\python.exe -m assistente.servizio_backend   # back-end, porta 8003
+```
+
+Documentazione OpenAPI su `http://localhost:8003/docs`.
+
+| Endpoint | Uso |
+|---|---|
+| `POST /chat` | crea una chat: 201 `{id, titolo, creata_il}`; il titolo è «Nuova chat» e diventa i primi 50 caratteri della prima domanda |
+| `GET /chat` | `[{id, titolo, ultimo_messaggio_il}]`, dalla più recente (`null` senza messaggi) |
+| `GET /chat/{id}` | `{id, titolo, messaggi: [{ruolo, testo, creato_il}]}` in ordine cronologico |
+| `POST /chat/{id}/messaggi` | `{testo, conferme}` → `{risposta, strumenti_usati, conferme_richieste}` |
+| `DELETE /chat/{id}` | 204: elimina la chat e i suoi messaggi |
+
+```powershell
+$c = Invoke-RestMethod -Method Post http://localhost:8003/chat
+$r = Invoke-RestMethod -Method Post -Uri "http://localhost:8003/chat/$($c.id)/messaggi" -ContentType "application/json; charset=utf-8" -Body ([Text.Encoding]::UTF8.GetBytes('{"testo": "Che ore sono a Roma?"}'))
+$r.risposta
+Invoke-RestMethod "http://localhost:8003/chat/$($c.id)"
+```
+
+Domanda e risposta si salvano insieme, solo dopo la risposta dell'agente: in caso di errore la chat resta com'era e si può riprovare. Se `conferme_richieste` non è vuota (per esempio per `elimina_nota`) non viene salvato nulla: dopo aver chiesto all'utente si rimanda la stessa domanda con `"conferme": <conferme_richieste>`.
+
+Errori, sempre `{"errore": ...}`:
+
+| Caso | Risposta |
+|---|---|
+| Chat inesistente | 404 `Chat <id> non trovata` |
+| Agente spento o irraggiungibile | 503 `Agente non raggiungibile su <AGENTE_URL>` |
+| LM Studio non raggiungibile (503 dell'agente) | 503 con il messaggio dell'agente |
+| Altro errore dell'agente | 502 `Errore dell'agente: …` |
+| PostgreSQL non raggiungibile durante l'uso | 503 `Database non raggiungibile` |
+| `testo` vuoto o richiesta malformata | 422 |
+
+Senza `DATABASE_URL`, o con PostgreSQL non raggiungibile all'avvio, il back-end stampa il motivo ed esce con codice 1. Le chat restano dopo il riavvio del back-end e di `postgres` (volume `dati-postgres`; `docker compose down -v` le cancella).
 
 ### Server MCP delle note (uso locale)
 
@@ -395,6 +440,7 @@ Quando il limite è raggiunto il turno viene scartato: la cronologia torna a com
 src/assistente/   config, modello (LM Studio), grafo (LangGraph)
                   agente (turno e costruzione del grafo), servizio_agente/ (API FastAPI dell'agente)
                   terminale (CLI client dell'API)
+                  servizio_backend/ (API FastAPI delle chat), archivio (accesso a PostgreSQL)
                   comandi (comandi /prompts e /prompt: scomposizione, controllo, conversione)
                   riassunto (Riassunto della cronologia: turni, trascrizione, prompt, nodo)
                   router (Router di ambito: contesto, prompt, rifiuto)
@@ -457,4 +503,5 @@ docs/superpowers/ specifica e piano
 - **Variabile mancante:** il programma lo dice e termina con codice 1.
 - **«Non riesco a ottenere una risposta dal server»:** LM Studio è spento o `LM_STUDIO_BASE_URL` è sbagliato (l'API risponde 503). La chat resta aperta: riavviato il server, si può riprovare.
 - **Agente:** `Invoke-RestMethod http://localhost:8002/stato` (in PowerShell 5.1 un 503 diventa un'eccezione: il corpo con il motivo è nel messaggio) dice quale componente non è raggiungibile.
+- **Back-end e database:** `Database non raggiungibile` all'avvio o con 503: controlla `docker compose ps postgres` e che credenziali e porta di `DATABASE_URL` coincidano con `POSTGRES_*` e con `127.0.0.1:5433`. Usa `127.0.0.1` e non `localhost`: su Windows ogni connessione con `localhost` ha atteso circa 5 s. La porta 5433 evita un PostgreSQL già installato sull'host sulla 5432.
 - **Identificativo del modello:** LM Studio con un solo modello caricato ha risposto anche a un identificativo inesistente, quindi un errore di battitura può non dare errori. Verifica sempre con `prove_reali\verifica_modelli.py`.
