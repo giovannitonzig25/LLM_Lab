@@ -647,3 +647,27 @@ Controllo funzionale essenziale con LM Studio (`google/gemma-4-e2b`), una volta 
 
 - Docker Compose (nuovo servizio `agente` con healthcheck e CLI con `AGENTE_URL=http://agente:8002`): solo `docker compose config` valido, nessun avvio.
 - Prompt MCP dalla CLI attraverso l'API: coperti dai test con il server MCP reale (`test_main_prompt_spiega_dal_server_reale`).
+
+## Ramo `feat/backend-chat` — Step 7 Lezione 6: back-end, API e salvataggio delle chat (2026-11-17)
+
+Controllo funzionale essenziale con LM Studio (`google/gemma-4-e2b`), una volta per evidenza, distinto dai test simulati (`tests/test_servizio_backend.py`). PostgreSQL 17.6 in Docker (`docker compose up -d postgres`, pubblicato su `127.0.0.1:5433`); server MCP, servizio HTTP, agente e back-end avviati in locale come processi separati con le variabili di `.env`; chiamate con `Invoke-WebRequest`.
+
+- **Archivio da solo (Task 1):** giro `prepara` → `crea_chat` → due `aggiungi_scambio` → `elenca_chat` → `leggi_chat` → `stato_agente` → `elimina_chat` sul database vero: tutto come atteso (titolo = prima domanda senza spazi ai bordi, messaggi in ordine, `ChatNonTrovata` dopo l'eliminazione, `ErroreDatabase` con porta sbagliata).
+- **Avvio (Task 2):** senza `DATABASE_URL` → «DATABASE_URL mancante: impostala in .env (vedi .env.example).» e codice 1.
+
+| # | Atteso | Effettivo | Esito |
+|---|---|---|---|
+| B1 | OpenAPI generata e consultabile | `/docs` 200; `/openapi.json` con `/chat`, `/chat/{id}`, `/chat/{id}/messaggi` | **riuscita** |
+| B2 | Crea chat, invia un messaggio: risposta salvata e rileggibile | `POST /chat` → 201 id 4, «Nuova chat»; «Mi chiamo Giovanni. Che ore sono a Roma?» → 200 «Ora sono le 16:50:58 del 17 novembre 2026 a Roma (Europe/Rome).», `strumenti_usati=[orologio Europe/Rome]` (124 s); `GET /chat/4` con i due messaggi in ordine, titolo = domanda; `GET /chat` con `ultimo_messaggio_il` | **riuscita** |
+| B3 | Riavvio del back-end e di `postgres` (`docker compose restart postgres`): chat ancora presenti | Elenco e `GET /chat/4` identici a prima del riavvio; «Come mi chiamo?» → «Ti chiami Giovanni.» (84 s): la cronologia salvata arriva all'agente | **riuscita** |
+| B4 | Agente spento: errore chiaro, nulla salvato | `POST /chat/4/messaggi` → 503 `{"errore":"Agente non raggiungibile su http://localhost:8002"}` (4,5 s); `GET /chat/4` invariata | **riuscita** |
+
+### Comportamenti inattesi (registrati, non nascosti)
+
+- **Porta 5432 occupata** da un PostgreSQL installato su Windows: Compose pubblica il container su `127.0.0.1:5433`.
+- **`localhost` lento con psycopg su Windows:** con `DATABASE_URL=…@localhost:5433/…` ogni operazione attendeva ~5 s (tentativo IPv6 su `::1`, porta pubblicata solo su IPv4); con `127.0.0.1` ~0,1 s. `.env.example` usa `127.0.0.1`. Lo stesso effetto spiega probabilmente i 4,5 s di B4 con `AGENTE_URL=http://localhost:8002`.
+
+### Non verificati dal vivo
+
+- Ciclo di conferma di `elimina_nota` attraverso il back-end: coperto dal test simulato `test_conferma_non_salva_poi_salva`.
+- Database che cade durante l'uso (503 «Database non raggiungibile»): coperto dal test simulato.
