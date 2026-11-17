@@ -228,7 +228,7 @@ WARNING assistente.preferenze: preferenze non disponibili (...): uso i valori pr
 
 La riga `preferenze della sessione` c'è sempre e dice per ogni valore se viene dal file (`resource`) o dai valori predefiniti (`predefinito`). Con il server spento compaiono due avvisi distinti: quello degli strumenti MCP (invariato) e quello delle preferenze.
 
-**Docker:** `server-mcp` monta la cartella `./data` dell'host in sola lettura su `/preferenze` (`PREFERENZE_PATH=/preferenze/preferenze.json`). Crea il file prima dell'avvio; dopo una modifica basta un nuovo `docker compose run --rm assistente`, senza `docker compose build`.
+**Docker:** `server-mcp` monta la cartella `./data` dell'host in sola lettura su `/preferenze` (`PREFERENZE_PATH=/preferenze/preferenze.json`). Crea il file prima dell'avvio; dopo una modifica basta riavviare l'agente (`docker compose restart agente`, oppure un nuovo `docker compose run --rm assistente`), senza `docker compose build`.
 
 ## Comandi della CLI: prompt MCP
 
@@ -264,40 +264,59 @@ WARNING assistente.comandi: richiesta respinta: prompt=spiega argomenti={} probl
 
 ## Avvio con Docker Compose
 
-LM Studio resta sull'host; nel container l'indirizzo è `http://host.docker.internal:1234/v1` (Compose lo imposta al posto di quello di `.env`; per un'altra porta o indirizzo definisci `LM_STUDIO_DOCKER_URL` in `.env`). `LM_STUDIO_MODEL`, `MAX_PASSAGGI`, `MAX_REVISIONI` e `SOGLIA_RIASSUNTO` vengono da `.env`.
+Architettura dello Step 9: un container per componente. LM Studio resta sull'host.
 
-```powershell
-docker compose build
-docker compose run --rm assistente
+```
+browser ──▶ frontend (127.0.0.1:8004) ──/api──▶ backend ──▶ agente ──▶ LM Studio (host.docker.internal:1234)
+                                                   │           ├──▶ server-mcp   (interno)
+                                                   └──▶ postgres └──▶ servizi-http (interno)
 ```
 
-Compose avvia quattro servizi con la stessa immagine: `agente` (servizio HTTP dell'agente, solo su `127.0.0.1:8002`, con le variabili di `.env`), `server-mcp` (porta pubblicata solo su `127.0.0.1:8001`, note nel volume `dati-note`), `servizi-http` (solo su `127.0.0.1:8000`; il controllo di salute fa una richiesta HTTP reale a `/salute`) e `assistente` (la CLI, con `AGENTE_URL=http://agente:8002`). `docker compose run --rm assistente` avvia anche agente e server, se non sono già attivi. Lo stato del server si vede con `docker compose ps`: il controllo di salute fa una vera discovery MCP (`python -m assistente.verifica_mcp`), non solo una connessione alla porta.
+Prerequisiti: LM Studio attivo con il modello caricato, `.env` con `LM_STUDIO_MODEL`, `AMBITO_AGENTE` e `POSTGRES_*` (vedi `.env.example`), file `data/preferenze.json` (vedi «Preferenze dell'utente»). Un solo comando avvia l'intera applicazione:
 
 ```powershell
-docker compose up -d server-mcp                  # avvia solo il server (stato healthy dopo pochi secondi)
-docker compose run --rm --no-deps assistente python -m assistente.verifica_mcp   # discovery dal container: esce con 0 e stampa gli strumenti
-docker compose logs server-mcp                   # log del server
-docker compose down                              # ferma tutto: le note restano nel volume
-docker compose down -v                           # ferma tutto E cancella le note
+docker compose build          # dopo ogni modifica a src/ (costruisce anche l'immagine usata dalla CLI)
+docker compose up -d          # avvia l'applicazione
+docker compose ps             # stato dei servizi
 ```
 
-L'agente in Compose usa `SERVIZI_BASE_URL=http://servizi-http:8000` (`SERVIZI_DOCKER_URL` per cambiarlo) e `MCP_URL=http://server-mcp:8001/mcp` (`MCP_DOCKER_URL` per cambiarlo) e aspetta fino a `MCP_ATTESA_AVVIO` secondi (20) che il server risponda.
+Poi apri `http://127.0.0.1:8004` nel browser.
 
-Anche `servizi-http` è una dipendenza con `condition: service_started`: se è fermo l'agente parte lo stesso e gli strumenti HTTP rispondono `Errore: servizio non raggiungibile ...` (provato con `docker compose run --rm --no-deps assistente`).
+| Servizio | Immagine | Porta sull'host | Ruolo |
+|---|---|---|---|
+| `frontend` | `Dockerfile.frontend` | `127.0.0.1:8004` | pagina di chat; inoltra `/api/...` a `http://backend:8003` |
+| `backend` | `Dockerfile.backend` | nessuna | API delle chat; `AGENTE_URL=http://agente:8002`, `DATABASE_URL` composta in Compose da `POSTGRES_*` verso `postgres:5432`; parte a database pronto (`service_healthy`) |
+| `agente` | `Dockerfile` | nessuna | servizio HTTP dell'agente con le variabili di `.env`; non è esposto |
+| `postgres` | `postgres:17.6` | `127.0.0.1:5433` | chat nel volume `dati-postgres`; la porta serve anche al back-end avviato in locale |
+| `server-mcp` | `Dockerfile` | nessuna | strumenti, resource e prompt MCP; note nel volume `dati-note` |
+| `servizi-http` | `Dockerfile` | nessuna | date, scadenze e catalogo |
+| `assistente` | immagine dell'agente | nessuna | CLI, profilo `cli`: non parte con `up`, solo con `run` |
 
-**Avvio ridotto in Docker.** L'agente dipende da `server-mcp` con `condition: service_started`, non da `service_healthy`: se il server è fermo, in crash o non sano, l'agente parte comunque con il solo `orologio` e l'avviso. Se invece il server **non riesce nemmeno a partire** (per esempio la porta 8001 dell'host è occupata), `docker compose run --rm assistente` fallisce perché Compose non avvia la dipendenza («ports are not available»). In quel caso usa:
+**Server MCP e stdio.** La slide dello Step 9 prevede server MCP stdio avviati nel container dell'agente; il progetto usa FastMCP solo Streamable HTTP (scelta approvata), quindi `server-mcp` e `servizi-http` restano container separati, raggiungibili solo dalla rete interna di Compose. `docker compose ps` mostra quindi sei servizi.
+
+Nel container l'indirizzo di LM Studio è `http://host.docker.internal:1234/v1` (Compose lo imposta al posto di quello di `.env`; per un'altra porta o indirizzo definisci `LM_STUDIO_DOCKER_URL` in `.env`). `LM_STUDIO_MODEL`, `MAX_PASSAGGI`, `MAX_REVISIONI` e `SOGLIA_RIASSUNTO` vengono da `.env`. L'agente usa `SERVIZI_BASE_URL=http://servizi-http:8000` (`SERVIZI_DOCKER_URL` per cambiarlo) e `MCP_URL=http://server-mcp:8001/mcp` (`MCP_DOCKER_URL` per cambiarlo) e aspetta fino a `MCP_ATTESA_AVVIO` secondi (20) che il server risponda.
+
+```powershell
+docker compose logs agente                       # log dell'agente: Router, strumenti, Revisore, turni
+docker compose logs frontend backend             # richieste del browser e del back-end
+docker compose exec server-mcp python -m assistente.verifica_mcp   # discovery MCP: esce con 0 e stampa gli strumenti
+docker compose down                              # ferma tutto: chat e note restano nei volumi
+docker compose down -v                           # ferma tutto E cancella chat e note
+```
+
+**CLI in Docker.** `docker compose run --rm assistente` avvia la CLI (e, se non sono attivi, agente e server). Usa la stessa immagine dell'agente, quindi `docker compose build` la tiene aggiornata. Parla con l'agente sulla rete interna (`AGENTE_URL=http://agente:8002`) e parte quando l'agente risponde (`service_healthy`, dopo l'eventuale attesa di `MCP_ATTESA_AVVIO`).
+
+**Avvio ridotto in Docker.** L'agente dipende da `server-mcp` e da `servizi-http` con `condition: service_started`, non da `service_healthy`: se il server MCP è fermo, in crash o non sano, l'agente parte comunque con i soli strumenti locali e HTTP e l'avviso; con `servizi-http` fermo gli strumenti HTTP rispondono `Errore: servizio non raggiungibile ...`. Per avviare l'agente senza le sue dipendenze:
 
 ```powershell
 docker compose up -d --no-deps agente
 docker compose run --rm --no-deps assistente
 ```
 
-che avviano l'agente senza il server (avvio ridotto) e poi la CLI. La CLI dipende da `agente` con `condition: service_healthy`: parte quando l'agente risponde, dopo l'eventuale attesa di `MCP_ATTESA_AVVIO`. I log dell'agente (con la traccia degli strumenti) si leggono con `docker compose logs agente`.
-
-Per controllare dal container che l'host sia raggiungibile e il modello presente:
+Per controllare dal container dell'agente che l'host sia raggiungibile e il modello presente (applicazione avviata):
 
 ```powershell
-docker compose run --rm --entrypoint python assistente prove_reali/verifica_modelli.py
+docker compose exec agente python prove_reali/verifica_modelli.py
 ```
 
 Se l'host non è raggiungibile controlla che il server di LM Studio sia attivo e la porta; se non basta, in LM Studio abilita «Serve on Local Network». Nelle prove fatte con Docker Desktop su Windows non è stato necessario aggiungere `extra_hosts`.
@@ -503,7 +522,7 @@ docs/superpowers/ specifica e piano
 - **Motivo nei log:** è testo generato dal modello. Troncamento e istruzioni dello schema riducono il rischio che riporti parti della richiesta, ma non lo azzerano.
 - **Modello piccolo e sessioni lunghe:** con tutti gli 11 strumenti registrati, `google/gemma-4-e2b` a volte **non chiama lo strumento** e risponde a parole o dalla cronologia. In due sessioni di 22 domande è successo ogni volta sulle stesse 4 domande (catalogo, note, meteo), quindi in modo riproducibile; le stesse domande, in sessioni nuove, hanno scelto lo strumento giusto 12 volte su 12. Non è stato mai chiamato uno strumento sbagliato. Se la risposta sembra inventata o obsoleta (per esempio un elenco di note), riformula la domanda o riavvia l'agente. L'elenco delle note mostrato dal modello senza chiamata può non essere aggiornato. Vedi `prove_reali/PROVE.md`.
 - **Conferma di cancellazione:** una cancellazione non parte mai senza il tuo `s` nel terminale; se il modello non chiama `elimina_nota` non compare la domanda `[s/N]` e non viene cancellato nulla. Con input da pipe una domanda saltata disallinea le righe successive.
-- **Servizi e porte occupate:** se una porta pubblicata (8001 per `server-mcp`, 8000 per `servizi-http`) è già in uso dall'host, `docker compose run --rm assistente` fallisce perché Compose non avvia la dipendenza; usa `docker compose run --rm --no-deps assistente`. Provato per la porta 8001 e per la 8000.
+- **Porte occupate:** in Compose sono pubblicate solo `127.0.0.1:8004` (front-end) e `127.0.0.1:5433` (PostgreSQL). Se una è già in uso dall'host, `docker compose up` non avvia quel servizio («ports are not available»): libera la porta. `server-mcp`, `servizi-http`, `agente` e `backend` non pubblicano porte e non entrano in conflitto con i servizi avviati in locale.
 - **Catalogo e date:** i corsi sono fittizi e le date sono limitate al 2026-2027.
 - **Immagine Docker:** il codice è copiato nell'immagine al momento della build. Dopo ogni modifica a `src/` esegui `docker compose build`, altrimenti `docker compose run` usa l'immagine vecchia.
 - **`MAX_PASSAGGI` piccolo:** con `MAX_REVISIONI=1` (predefinito) e `MAX_PASSAGGI=1` nessuna correzione e nessun giro di strumento rientrano nel limite; con 2 o più sì. Con `MAX_REVISIONI=0` un giro di strumento richiede almeno `MAX_PASSAGGI=4`. Tabella completa in «Limite di passaggi».

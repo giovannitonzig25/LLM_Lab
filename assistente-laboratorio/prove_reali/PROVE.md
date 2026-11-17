@@ -698,3 +698,29 @@ Controllo funzionale essenziale con LM Studio (`google/gemma-4-e2b`), una volta 
 - LM Studio spento o database non raggiungibile visti dal browser: stesso percorso di F3 (503 `{"errore": ...}` del back-end mostrato nel riquadro), non provati a mano.
 - Front-end in Docker Compose: escluso, è lo Step 9.
 - Una sola prova in un browser desktop; layout per schermi stretti (sotto 720 px) e tema scuro non provati.
+## Ramo `feat/compose-definitivo` — Step 9 Lezione 6: Docker Compose, un container per componente (2026-11-17)
+
+Controllo funzionale essenziale con LM Studio sull'host (`google/gemma-4-e2b`), una volta per evidenza. Tutto in Docker Compose (`docker compose build`, `docker compose up -d`): `frontend`, `backend`, `agente`, `postgres` più i servizi interni `server-mcp` e `servizi-http`. Prova C2 eseguita dall'utente nel browser su `http://127.0.0.1:8004`, esito confermato nei log di `frontend`, `backend` e `agente`.
+
+- **Configurazione:** `docker compose config --quiet` → 0; servizi senza profilo: `server-mcp`, `servizi-http`, `agente`, `postgres`, `backend`, `frontend`; porte pubblicate solo `127.0.0.1:8004` e `127.0.0.1:5433`; `DATABASE_URL` del back-end verso `postgres:5432` (verificata con credenziali mascherate). Suite: 800 passed.
+
+| # | Atteso | Effettivo | Esito |
+|---|---|---|---|
+| C1 | `docker compose up` avvia i servizi; `docker compose ps` li mostra attivi; agente non esposto | `up -d`: `postgres` healthy prima dell'avvio di `backend`, poi `frontend`; `ps`: sei servizi `running`, `agente`, `postgres`, `server-mcp`, `servizi-http` healthy (`backend` e `frontend` senza healthcheck); `curl.exe` su `127.0.0.1:8000`, `8001`, `8002`, `8003` → connessione rifiutata (codice 7); `127.0.0.1:8004/` → 200; `/api/chat` → chat 6 e 4 dal volume. Agente: discovery su `http://server-mcp:8001/mcp` (4 strumenti) e preferenze lette | **riuscita** |
+| C2 | Chat dal browser con uno strumento, visibile nei log dell'agente | «che ore sono a new york?» nella chat 6: front-end `POST /api/chat/6/messaggi` → back-end `POST http://agente:8002/chat` 200; agente: Router `conversazione` (41,7 s), `strumento richiesto: nome=orologio argomenti={'timezone': 'America/New_York'}`, risultato `2026-11-17 12:10:30 (America/New_York, UTC-05:00)`, Revisore `coerente=true`, `turno: esito=risposta strumenti=['orologio']` in 115,0 s; risposta «Attualmente sono le 12:10:30 del 17 novembre 2026 a New York.» | **riuscita** |
+| C3 | Dopo `docker compose down` e `docker compose up` le chat sono ancora presenti | Prima: chat 6 e 4, chat 6 con 10 messaggi. `docker compose down` (senza `-v`, volume `dati-postgres` conservato), `docker compose up -d`: chat 6 e 4 in `GET /api/chat`, chat 6 con 10 messaggi, ultimo la risposta di C2 | **riuscita** |
+
+- **CLI con profilo `cli`:** `printf '/prompts\n' | docker compose run --rm -T assistente` (bash) → elenco dei prompt `spiega` e `riassumi_conversazione` (`GET /prompts` nei log dell'agente), uscita 0.
+- **Comandi del README:** `docker compose exec server-mcp python -m assistente.verifica_mcp` → 0, 4 strumenti; `docker compose exec agente python prove_reali/verifica_modelli.py` → `OK: google/gemma-4-e2b`; `docker compose restart agente` → preferenze rilette (log `preferenze della sessione`).
+
+### Comportamenti inattesi (registrati, non nascosti)
+
+- **Immagine vecchia della CLI:** con il profilo `cli`, `docker compose build` non ricostruiva `assistente`; `docker compose run` ha usato un'immagine di 22 ore prima (anteriore allo Step 6) ed è uscito con «Variabile d'ambiente mancante o vuota: LM_STUDIO_BASE_URL». Corretto: `assistente` usa l'immagine dell'agente (`image: assistente-laboratorio-agente`, `pull_policy: never`), costruita da `docker compose build`; immagine vecchia rimossa e prova ripetuta con esito positivo.
+- **Pipe di PowerShell 5.1:** `"/prompts" | docker compose run --rm -T assistente` ha mandato la riga al modello (rifiuto del Router) perché la pipe di PowerShell verso un programma esterno antepone un BOM e la riga non comincia più con `/`. Con bash e da tastiera la riga è un comando. Nessuna modifica al codice.
+- **C2 nella chat esistente:** la domanda è stata scritta nella chat 6 già presente invece che in una chat nuova; la prova resta valida.
+
+### Non verificati dal vivo
+
+- Ciclo di conferma di `elimina_nota` dal browser con l'applicazione in Compose (codice invariato rispetto alla F4 dello Step 8).
+- CLI in Docker con domande al modello da tastiera (verificato solo il comando `/prompts`).
+- Server MCP stdio nel container dell'agente: non realizzato per scelta (FastMCP solo Streamable HTTP, specifica dello Step 9).
