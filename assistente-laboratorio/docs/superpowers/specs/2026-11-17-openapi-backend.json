@@ -1,0 +1,526 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Back-end dell'assistente",
+    "description": "Unico punto di contatto del front-end: gestisce le chat, le salva in PostgreSQL e inoltra le domande all'agente. Errori nel formato `{\"errore\": ...}`; in caso di errore nulla è salvato.",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/chat": {
+      "get": {
+        "summary": "Elenca",
+        "description": "Chat con titolo e data dell'ultimo messaggio, dalla più recente.",
+        "operationId": "elenca_chat_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ChatInElenco"
+                  },
+                  "type": "array",
+                  "title": "Response Elenca Chat Get"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database non raggiungibile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errore"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Crea",
+        "description": "Crea una chat vuota e ne restituisce l'identificativo.",
+        "operationId": "crea_chat_post",
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatCreata"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database non raggiungibile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errore"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/chat/{id}": {
+      "get": {
+        "summary": "Leggi",
+        "description": "Messaggi della chat in ordine cronologico.",
+        "operationId": "leggi_chat__id__get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Chat"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Chat inesistente",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errore"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database non raggiungibile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errore"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Elimina",
+        "description": "Elimina la chat e i suoi messaggi.",
+        "operationId": "elimina_chat__id__delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Chat inesistente",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errore"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database non raggiungibile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errore"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/chat/{id}/messaggi": {
+      "post": {
+        "summary": "Invia",
+        "description": "Inoltra la domanda all'agente; salva domanda e risposta solo se l'agente risponde senza chiedere conferme.",
+        "operationId": "invia_chat__id__messaggi_post",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NuovoMessaggio"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RispostaMessaggio"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Chat inesistente",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errore"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "L'agente ha risposto con un errore",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errore"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agente non raggiungibile, modello spento o database non raggiungibile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errore"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Chat": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "titolo": {
+            "type": "string",
+            "title": "Titolo"
+          },
+          "messaggi": {
+            "items": {
+              "$ref": "#/components/schemas/Messaggio"
+            },
+            "type": "array",
+            "title": "Messaggi"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "titolo",
+          "messaggi"
+        ],
+        "title": "Chat"
+      },
+      "ChatCreata": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "titolo": {
+            "type": "string",
+            "title": "Titolo"
+          },
+          "creata_il": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Creata Il"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "titolo",
+          "creata_il"
+        ],
+        "title": "ChatCreata"
+      },
+      "ChatInElenco": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "titolo": {
+            "type": "string",
+            "title": "Titolo"
+          },
+          "ultimo_messaggio_il": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ultimo Messaggio Il"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "titolo",
+          "ultimo_messaggio_il"
+        ],
+        "title": "ChatInElenco"
+      },
+      "Conferma": {
+        "properties": {
+          "strumento": {
+            "type": "string",
+            "title": "Strumento"
+          },
+          "argomenti": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Argomenti"
+          }
+        },
+        "type": "object",
+        "required": [
+          "strumento"
+        ],
+        "title": "Conferma"
+      },
+      "Errore": {
+        "properties": {
+          "errore": {
+            "type": "string",
+            "title": "Errore"
+          }
+        },
+        "type": "object",
+        "required": [
+          "errore"
+        ],
+        "title": "Errore"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "Messaggio": {
+        "properties": {
+          "ruolo": {
+            "type": "string",
+            "title": "Ruolo"
+          },
+          "testo": {
+            "type": "string",
+            "title": "Testo"
+          },
+          "creato_il": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Creato Il"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ruolo",
+          "testo",
+          "creato_il"
+        ],
+        "title": "Messaggio"
+      },
+      "NuovoMessaggio": {
+        "properties": {
+          "testo": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Testo",
+            "description": "Domanda dell'utente."
+          },
+          "conferme": {
+            "items": {
+              "$ref": "#/components/schemas/Conferma"
+            },
+            "type": "array",
+            "title": "Conferme",
+            "description": "Strumenti distruttivi confermati dall'utente: si ripete la stessa domanda con le `conferme_richieste` della risposta precedente."
+          }
+        },
+        "type": "object",
+        "required": [
+          "testo"
+        ],
+        "title": "NuovoMessaggio"
+      },
+      "RispostaMessaggio": {
+        "properties": {
+          "risposta": {
+            "type": "string",
+            "title": "Risposta"
+          },
+          "strumenti_usati": {
+            "items": {
+              "$ref": "#/components/schemas/StrumentoUsato"
+            },
+            "type": "array",
+            "title": "Strumenti Usati"
+          },
+          "conferme_richieste": {
+            "items": {
+              "$ref": "#/components/schemas/Conferma"
+            },
+            "type": "array",
+            "title": "Conferme Richieste",
+            "description": "Se non è vuota, nulla è stato salvato: chiedere all'utente e ripetere la domanda con `conferme`."
+          }
+        },
+        "type": "object",
+        "required": [
+          "risposta",
+          "strumenti_usati",
+          "conferme_richieste"
+        ],
+        "title": "RispostaMessaggio"
+      },
+      "StrumentoUsato": {
+        "properties": {
+          "nome": {
+            "type": "string",
+            "title": "Nome"
+          },
+          "argomenti": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Argomenti"
+          }
+        },
+        "type": "object",
+        "required": [
+          "nome",
+          "argomenti"
+        ],
+        "title": "StrumentoUsato"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

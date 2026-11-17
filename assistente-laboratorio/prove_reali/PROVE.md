@@ -671,3 +671,30 @@ Controllo funzionale essenziale con LM Studio (`google/gemma-4-e2b`), una volta 
 
 - Ciclo di conferma di `elimina_nota` attraverso il back-end: coperto dal test simulato `test_conferma_non_salva_poi_salva`.
 - Database che cade durante l'uso (503 «Database non raggiungibile»): coperto dal test simulato.
+
+## Ramo `feat/frontend-chat` — Step 8 Lezione 6: front-end, interfaccia di chat (2026-11-17)
+
+Controllo funzionale essenziale con LM Studio (`google/gemma-4-e2b`), una volta per evidenza, distinto dai test simulati (`tests/test_servizio_frontend.py`). PostgreSQL in Docker (`docker compose up -d postgres`, `127.0.0.1:5433`); server MCP, servizio HTTP, agente, back-end e front-end avviati in locale come processi separati con le variabili di `.env`. Prove eseguite dall'utente nel browser su `http://127.0.0.1:8004`; esiti confermati nei log di accesso del front-end e nei log dell'agente.
+
+- **Avvio (Task 1):** senza back-end, `GET /` → 200 e `GET /api/chat` → 503 `{"errore":"Back-end non raggiungibile su http://127.0.0.1:8003"}`.
+- **Inoltro (Task 2):** tramite la porta 8004 `POST /api/chat` → 201, `GET /api/chat/5` → 200, `DELETE` → 204, poi 404 `{"errore":"Chat 5 non trovata"}`; `/static/app.js` e `/static/stile.css` → 200; `node --check app.js` (Node già presente sull'host, solo come controllo di sintassi) → 0.
+
+| # | Atteso | Effettivo | Esito |
+|---|---|---|---|
+| F1 | Conversazione completa dal browser, con uso di uno strumento | «+ Nuova chat» → chat 6; «Che ore sono a Tokyo?» → «Attualmente sono le 01:22:58 del 18 novembre 2026 a Tokyo.», strumento `orologio` (Asia/Tokyo), 111 s, indicatore di attesa e invio bloccato durante il turno; titolo della chat aggiornato nell'elenco; conversazione proseguita nella stessa chat (note, sotto) | **riuscita** |
+| F2 | Chat creata dall'interfaccia ancora presente dopo il riavvio | Fermati back-end e front-end, `docker compose restart postgres`, riavviati i due servizi: chat 6 «Che ore sono a Tokyo?» con 8 messaggi in `GET /api/chat/6`; nel browser, dopo Ctrl+F5, chat in elenco e messaggi visibili | **riuscita** |
+| F3 | Agente spento: l'interfaccia mostra l'errore senza bloccarsi | Agente fermato; «Che ore sono a Roma?» → `POST /api/chat/6/messaggi` 503, riquadro rosso «Agente non raggiungibile su http://localhost:8002», domanda di nuovo nel campo; subito dopo aperte la chat 4 e la chat 6 (200) | **riuscita** |
+| F4 | Ciclo di conferma di `elimina_nota` dal browser | «Aggiungi una nota personale con il testo: riunione del lunedì» → nota 3 creata (143 s); «Elimina la mia nota personale «riunione del lunedì»» → finestra di conferma con `elimina_nota` (183 s), **Annulla** → nulla eseguito né salvato; stessa domanda (207 s) → **Conferma** → turno ripetuto con `conferme`, log `conferma dell'utente: strumento=elimina_nota esito=sì`, «Nota 3 eliminata» (223 s). In `GET /api/chat/6` solo lo scambio confermato, nessuno dei due tentativi in attesa di conferma | **riuscita** |
+
+### Comportamenti inattesi (registrati, non nascosti)
+
+- **Falso rifiuto del Router:** «Aggiungi una nota: comprare il latte» → `fuori_ambito` («richiesta di azione pratica non informativa», 62 s), risposta fissa di rifiuto mostrata dalla pagina come le altre risposte. Con «Aggiungi una nota personale con il testo: …» la domanda è passata. Limitazione nota degli Step 1–4, Router non modificato.
+- **Turni lunghi:** i turni con `elimina_nota` hanno richiesto da 183 a 223 s, oltre i 1–3 minuti stimati; nessun timeout è scaduto (inoltro con lettura senza limite, `fetch` senza timeout).
+- **Primo giro di prove:** il primo esito comunicato non trovava riscontro nei log (nessuna richiesta dal browser alla porta 8004) per un'incomprensione sulle istruzioni; le prove sono state rifatte e verificate nei log.
+- **Riavvio su Windows:** `.venv\Scripts\python.exe` avvia un processo figlio; fermare solo il processo padre lascia il servizio in ascolto. Per il riavvio di F2 sono stati fermati anche i figli.
+
+### Non verificati dal vivo
+
+- LM Studio spento o database non raggiungibile visti dal browser: stesso percorso di F3 (503 `{"errore": ...}` del back-end mostrato nel riquadro), non provati a mano.
+- Front-end in Docker Compose: escluso, è lo Step 9.
+- Una sola prova in un browser desktop; layout per schermi stretti (sotto 720 px) e tema scuro non provati.

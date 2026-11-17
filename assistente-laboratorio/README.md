@@ -1,6 +1,6 @@
 # Assistente del laboratorio
 
-Agente in Python con un grafo LangGraph esplicito, esposto come servizio HTTP (FastAPI) e usato da una CLI da terminale che ne è client. Specifica e piano: `docs/superpowers/`.
+Agente in Python con un grafo LangGraph esplicito, esposto come servizio HTTP (FastAPI) e usato da una CLI da terminale che ne è client; un back-end salva le chat in PostgreSQL e un front-end web le rende usabili dal browser. Specifica e piano: `docs/superpowers/`.
 
 ## Ambiente (PowerShell, da `assistente-laboratorio/`)
 
@@ -51,6 +51,8 @@ Lato servizio dell'agente (`python -m assistente.servizio_agente`): `AGENTE_HOST
 
 Lato back-end delle chat (`python -m assistente.servizio_backend`, vedi «Back-end delle chat»): `DATABASE_URL` (obbligatoria), `AGENTE_URL` (predefinito `http://localhost:8002`), `BACKEND_HOST` (predefinito `127.0.0.1`), `BACKEND_PORT` (predefinito `8003`). Il servizio `postgres` di Compose legge `POSTGRES_USER`, `POSTGRES_PASSWORD` e `POSTGRES_DB` da `.env`: le credenziali di `DATABASE_URL` devono coincidere.
 
+Lato front-end delle chat (`python -m assistente.servizio_frontend`, vedi «Front-end delle chat»): `BACKEND_URL` (predefinito `http://127.0.0.1:8003`), `FRONTEND_HOST` (predefinito `127.0.0.1`), `FRONTEND_PORT` (predefinito `8004`).
+
 Lato servizio HTTP (`python -m assistente.servizi_http`): `SERVIZI_HOST` (predefinito `127.0.0.1`), `SERVIZI_PORT` (predefinito `8000`).
 
 Lato server MCP (`python -m assistente.server_mcp`): `NOTE_DB_PATH` (file SQLite, predefinito `data/note.db`), `PREFERENZE_PATH` (file delle preferenze, predefinito `data/preferenze.json` nella cartella del progetto, vedi «Preferenze dell'utente»), `MCP_HOST` (predefinito `127.0.0.1`), `MCP_PORT` (predefinito `8001`).
@@ -86,7 +88,7 @@ Errori: 503 se LM Studio non è raggiungibile (`{"errore": "Non riesco a ottener
 
 ### Back-end delle chat
 
-Il back-end è l'unico punto di contatto del futuro front-end: gestisce le chat, le salva in PostgreSQL (tabelle `chat` e `messaggi`, create all'avvio) e inoltra le domande all'agente. Per ogni chat conserva anche `cronologia` e `riassunto` dell'agente, che rimanda a ogni domanda senza interpretarli e che non compaiono mai nelle sue risposte. La CLI resta client diretto dell'agente.
+Il back-end è l'unico punto di contatto del front-end (vedi «Front-end delle chat»): gestisce le chat, le salva in PostgreSQL (tabelle `chat` e `messaggi`, create all'avvio) e inoltra le domande all'agente. Per ogni chat conserva anche `cronologia` e `riassunto` dell'agente, che rimanda a ogni domanda senza interpretarli e che non compaiono mai nelle sue risposte. La CLI resta client diretto dell'agente.
 
 Avvio (PostgreSQL in Docker, agente già attivo; variabili di `.env` caricate come sopra):
 
@@ -126,6 +128,27 @@ Errori, sempre `{"errore": ...}`:
 | `testo` vuoto o richiesta malformata | 422 |
 
 Senza `DATABASE_URL`, o con PostgreSQL non raggiungibile all'avvio, il back-end stampa il motivo ed esce con codice 1. Le chat restano dopo il riavvio del back-end e di `postgres` (volume `dati-postgres`; `docker compose down -v` le cancella).
+
+### Front-end delle chat
+
+Interfaccia web di chat per chi non conosce il progetto: una pagina HTML, CSS e JavaScript semplice (senza framework né compilazione) servita da un piccolo servizio FastAPI. Parla **solo** con il back-end: la pagina chiama `/api/...` sulla propria origine e il servizio inoltra la richiesta così com'è a `BACKEND_URL`, restituendo codice e corpo del back-end. Le chiamate seguono il contratto OpenAPI del back-end, esportato in `docs/superpowers/specs/2026-11-17-openapi-backend.json`.
+
+Avvio (back-end già attivo, vedi sopra; variabili di `.env` caricate come in «Configurazione»):
+
+```powershell
+$env:PYTHONPATH = "src"; .\.venv\Scripts\python.exe -m assistente.servizio_frontend   # front-end, porta 8004
+```
+
+Poi apri `http://127.0.0.1:8004` nel browser:
+
+- a sinistra l'elenco delle chat (dalla più recente), «+ Nuova chat» e 🗑 per eliminarne una (con conferma);
+- a destra i messaggi della chat scelta; scrivi la domanda e premi Invio (Maiusc+Invio va a capo). Senza chat aperta, la prima domanda ne crea una;
+- durante la risposta (anche 1–3 minuti) compare «L'assistente sta rispondendo…» e l'invio è bloccato; nessun timeout scade;
+- sotto la risposta compaiono gli strumenti usati;
+- se l'assistente vuole cancellare una nota (`elimina_nota`), una finestra mostra strumento e argomenti: **Conferma** rimanda la stessa domanda con la conferma, **Annulla** non esegue né salva nulla;
+- gli errori del back-end (agente spento, LM Studio spento, database non raggiungibile) compaiono in un riquadro rosso; la pagina resta utilizzabile e la domanda torna nel campo per riprovare.
+
+Se il back-end non risponde il front-end restituisce `503 {"errore": "Back-end non raggiungibile su <BACKEND_URL>"}`.
 
 ### Server MCP delle note (uso locale)
 
@@ -441,6 +464,7 @@ src/assistente/   config, modello (LM Studio), grafo (LangGraph)
                   agente (turno e costruzione del grafo), servizio_agente/ (API FastAPI dell'agente)
                   terminale (CLI client dell'API)
                   servizio_backend/ (API FastAPI delle chat), archivio (accesso a PostgreSQL)
+                  servizio_frontend/ (pagina di chat e inoltro /api al back-end)
                   comandi (comandi /prompts e /prompt: scomposizione, controllo, conversione)
                   riassunto (Riassunto della cronologia: turni, trascrizione, prompt, nodo)
                   router (Router di ambito: contesto, prompt, rifiuto)
@@ -504,4 +528,5 @@ docs/superpowers/ specifica e piano
 - **«Non riesco a ottenere una risposta dal server»:** LM Studio è spento o `LM_STUDIO_BASE_URL` è sbagliato (l'API risponde 503). La chat resta aperta: riavviato il server, si può riprovare.
 - **Agente:** `Invoke-RestMethod http://localhost:8002/stato` (in PowerShell 5.1 un 503 diventa un'eccezione: il corpo con il motivo è nel messaggio) dice quale componente non è raggiungibile.
 - **Back-end e database:** `Database non raggiungibile` all'avvio o con 503: controlla `docker compose ps postgres` e che credenziali e porta di `DATABASE_URL` coincidano con `POSTGRES_*` e con `127.0.0.1:5433`. Usa `127.0.0.1` e non `localhost`: su Windows ogni connessione con `localhost` ha atteso circa 5 s. La porta 5433 evita un PostgreSQL già installato sull'host sulla 5432.
+- **Front-end:** «Back-end non raggiungibile su …» nel riquadro rosso indica il back-end spento o `BACKEND_URL` sbagliato; «Agente non raggiungibile su …» indica l'agente spento (il back-end risponde). Se la pagina non si apre affatto, il servizio del front-end non è avviato.
 - **Identificativo del modello:** LM Studio con un solo modello caricato ha risposto anche a un identificativo inesistente, quindi un errore di battitura può non dare errori. Verifica sempre con `prove_reali\verifica_modelli.py`.
